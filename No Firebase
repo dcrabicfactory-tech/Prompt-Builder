@@ -1,0 +1,1491 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { 
+  Copy, RefreshCw, Check, Sparkles, Zap, ScanEye, Terminal, Wand2, 
+  Loader2, Image as ImageIcon, Upload, ArrowDown, MapPin, Aperture, 
+  X, Shirt, ChevronDown, Heart, Film, ShoppingBag, Scissors, Smile, 
+  Hand, Footprints, MousePointer2, Bot, ImagePlus, Lightbulb, Box, 
+  Palette, Eye, EyeOff, Info, HelpCircle, Undo2, Redo2, User, Sun,
+  Languages, AlertTriangle, ShieldAlert, BookOpenCheck, Bookmark, Trash2, History
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, addDoc, updateDoc, deleteDoc, query } from 'firebase/firestore';
+
+// --- FIREBASE INITIALIZATION ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// Cấu hình API Key (Sẽ được môi trường runtime inject)
+const apiKey = ""; 
+
+// --- UTILS: IMAGE OPTIMIZATION ---
+const resizeImage = (file, maxWidth = 1024) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height *= maxWidth / width;
+          width = maxWidth;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+// --- API HELPER ---
+const callGeminiApi = async (payload) => {
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    return null;
+  }
+};
+
+// --- HELPER COMPONENTS ---
+
+const GlobalGradientDef = () => (
+  <svg width="0" height="0" className="absolute pointer-events-none" aria-hidden="true">
+    <defs>
+      <linearGradient id="icon-gradient-style" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop stopColor="white" offset="0%" />
+        <stop stopColor="#D3A08F" offset="50%" />
+        <stop stopColor="rgba(255,255,255,0.6)" offset="100%" />
+      </linearGradient>
+      <linearGradient id="icon-gradient-active" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop stopColor="#FE9C00" offset="0%" />
+        <stop stopColor="#D3A08F" offset="100%" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
+const GradientIcon = React.memo(({ icon: Icon, size = 22, className = "", gradientId = "icon-gradient-style" }) => (
+  <div className={`relative flex items-center justify-center ${className}`}>
+    <Icon size={size} style={{ stroke: `url(#${gradientId})` }} />
+  </div>
+));
+
+const BackgroundLiquid = React.memo(() => (
+  <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-[#0a0504]">
+    <div className="absolute top-[-10%] left-[-10%] w-[90%] h-[90%] opacity-40" style={{ background: 'radial-gradient(circle, rgba(43,43,43,0.8) 0%, rgba(10,5,4,0) 70%)' }} />
+    <div className="absolute bottom-[-10%] right-[-10%] w-[80%] h-[80%] opacity-30" style={{ background: 'radial-gradient(circle, rgba(143,141,141,0.4) 0%, rgba(10,5,4,0) 70%)' }} />
+    <div className="absolute top-[30%] right-[-5%] w-[50%] h-[50%] opacity-20" style={{ background: 'radial-gradient(circle, rgba(211,160,143,0.3) 0%, rgba(10,5,4,0) 70%)' }} />
+  </div>
+));
+
+const ConfirmButton = React.memo(({ isConfirmed, onConfirm, onCancel, isDisabled }) => (
+  <div className="flex gap-3 w-full">
+    <button 
+      onClick={onConfirm} 
+      disabled={isDisabled} 
+      className={`flex-1 py-3 px-3 md:px-5 flex items-center justify-center gap-2 md:gap-3 text-sm md:text-base font-black uppercase rounded-[1.2rem] transition-all duration-300 transform active:scale-95 whitespace-nowrap ${isConfirmed ? 'bg-[#FE9C00] text-white shadow-lg shadow-[#FE9C00]/40 ring-1 ring-white/30' : isDisabled ? 'bg-white/5 text-slate-600 cursor-not-allowed border border-white/5' : 'bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20'}`}
+    >
+      <ArrowDown size={16} className={`md:w-[18px] md:h-[18px] ${isDisabled ? "text-[#8F8D8D]" : isConfirmed ? "animate-bounce text-white" : "text-white"}`} /> 
+      <span className={isDisabled ? "text-[#8F8D8D]" : "text-white"}>{isConfirmed ? "Xác nhận" : "Áp dụng"}</span>
+    </button>
+    {isConfirmed && <button onClick={onCancel} className="w-[48px] h-[48px] md:w-[50px] md:h-[50px] flex items-center justify-center bg-red-500/20 hover:bg-red-500/40 text-red-200 rounded-full border border-red-500/20 backdrop-blur-3xl transition-all"><X size={18} className="md:w-[20px] md:h-[20px]" /></button>}
+  </div>
+));
+
+const ModeToggle = React.memo(({ isProduct, onToggle }) => (
+  <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 relative mb-6">
+    <div className={`absolute inset-y-1 w-[calc(50%-4px)] bg-[#FE9C00] rounded-xl shadow-lg shadow-[#FE9C00]/20 transition-all duration-300 ease-out ${isProduct ? 'left-[calc(50%+2px)]' : 'left-1'}`} />
+    <button onClick={() => onToggle(false)} className={`relative flex-1 py-3 text-sm font-black uppercase tracking-wider transition-colors z-10 flex items-center justify-center gap-2 ${!isProduct ? 'text-white' : 'text-white/40 hover:text-white/60'}`}><Sparkles size={14} className={!isProduct ? 'opacity-100' : 'opacity-0 hidden'} />Model</button>
+    <button onClick={() => onToggle(true)} className={`relative flex-1 py-3 text-sm font-black uppercase tracking-wider transition-colors z-10 flex items-center justify-center gap-2 ${isProduct ? 'text-white' : 'text-white/40 hover:text-white/60'}`}><Box size={14} className={isProduct ? 'opacity-100' : 'opacity-0 hidden'} />Product</button>
+  </div>
+));
+
+const PromptSourceControl = React.memo(({ onSelectAI, onSelectManual, onSelectImageUpload, hasAiData, hasSelection, activeSource, undo, redo, canUndo, canRedo }) => {
+  const getButtonClass = (isActive, isDisabled, activeBg) => `
+    flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all duration-300
+    ${isActive ? `${activeBg} text-white shadow-lg` : isDisabled ? 'text-[#8F8D8D]/50 cursor-not-allowed' : 'text-[#8F8D8D] hover:text-white hover:bg-white/5'}
+  `;
+  return (
+    <div className="flex items-center justify-between w-full mb-2">
+      <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5 w-fit transition-all">
+        <button onClick={onSelectAI} disabled={!hasAiData} className={getButtonClass(activeSource === 'ai', !hasAiData, 'bg-[#FE9C00]')} title="AI Scan">
+          <Bot size={14} /><span className={`${activeSource === 'ai' ? 'max-w-[100px] opacity-100 ml-1' : 'max-w-0 opacity-0 ml-0'} overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out`}>AI Scan</span>
+        </button>
+        <button onClick={onSelectManual} className={getButtonClass(activeSource === 'manual', false, 'bg-[#8F8D8D]/40')} title="Lựa chọn">
+          <MousePointer2 size={14} /><span className={`${activeSource === 'manual' ? 'max-w-[100px] opacity-100 ml-1' : 'max-w-0 opacity-0 ml-0'} overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out`}>Lựa chọn</span>
+        </button>
+        {onSelectImageUpload && (
+          <button onClick={onSelectImageUpload} className={getButtonClass(activeSource === 'image_scan', false, 'bg-[#FE9C00]')} title="Scan Ảnh">
+            <ImagePlus size={14} /><span className={`${activeSource === 'image_scan' ? 'max-w-[100px] opacity-100 ml-1' : 'max-w-0 opacity-0 ml-0'} overflow-hidden whitespace-nowrap transition-all duration-300 ease-in-out`}>Scan Ảnh</span>
+          </button>
+        )}
+      </div>
+      <div className="flex items-center gap-1 bg-black/20 p-1 rounded-lg border border-white/5">
+         <button onClick={undo} disabled={!canUndo} className={`p-1.5 rounded-md transition-colors ${!canUndo ? 'text-[#8F8D8D]/30 cursor-not-allowed' : 'text-[#8F8D8D] hover:text-white hover:bg-white/10'}`} title="Hoàn tác">
+            <Undo2 size={14} />
+         </button>
+         <button onClick={redo} disabled={!canRedo} className={`p-1.5 rounded-md transition-colors ${!canRedo ? 'text-[#8F8D8D]/30 cursor-not-allowed' : 'text-[#8F8D8D] hover:text-white hover:bg-white/10'}`} title="Làm lại">
+            <Redo2 size={14} />
+         </button>
+      </div>
+    </div>
+  );
+});
+
+const AiSuggestButton = React.memo(({ onClick, loading }) => (
+  <button onClick={onClick} disabled={loading} className="w-[48px] h-[48px] md:w-[50px] md:h-[50px] flex items-center justify-center rounded-full bg-white/10 hover:bg-[#FE9C00]/20 text-[#8F8D8D] hover:text-[#FE9C00] transition-all shadow-xl active:scale-95 disabled:opacity-50 border border-white/5 flex-shrink-0" title="AI Generate Idea">
+    {loading ? <Loader2 size={20} className="animate-spin" /> : <Wand2 size={20} />}
+  </button>
+));
+
+const SuggestionPills = React.memo(({ suggestions, onSelect, currentValue, onClear }) => {
+    if (!suggestions || suggestions.length === 0) return null;
+    return (
+        <div className="flex flex-wrap items-center gap-2 mb-3 animate-in fade-in slide-in-from-top-1 duration-300">
+            {suggestions.map((item, index) => {
+                const isActive = currentValue && currentValue === item.value_en;
+                return (
+                    <button
+                        key={index}
+                        onClick={() => onSelect(item.value_en)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all duration-200 active:scale-95 whitespace-nowrap ${isActive ? 'bg-[#FE9C00] text-white border-[#FE9C00] shadow-md shadow-[#FE9C00]/20' : 'bg-white/5 text-[#D3A08F] border-white/10 hover:bg-[#FE9C00] hover:text-white hover:shadow-lg hover:shadow-[#FE9C00]/20'}`}
+                        title={item.value_en}
+                    >
+                        {item.label_vi}
+                    </button>
+                )
+            })}
+            <button 
+                onClick={onClear}
+                className="w-6 h-6 rounded-full flex items-center justify-center bg-white/5 text-[#8F8D8D] hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 border border-white/10 transition-all ml-1"
+                title="Xóa prompt"
+            >
+                <X size={12} />
+            </button>
+        </div>
+    );
+});
+
+const ExplanationBox = ({ text, isLoading, onTranslate }) => {
+   if (!text && !onTranslate) return null;
+   return (
+      <div className="mt-2 mb-2 text-[11px] md:text-xs text-white/70 italic border-l-2 border-[#FE9C00]/50 pl-2 flex flex-row items-center justify-between gap-2">
+         <span className="flex-1 line-clamp-2 md:line-clamp-none">{text || "..."}</span>
+         {(!text && onTranslate) && (
+            <button onClick={onTranslate} disabled={isLoading} className="flex items-center gap-1 px-2.5 py-1.5 md:px-3 md:py-1 bg-white/10 hover:bg-[#FE9C00]/20 rounded-full text-[10px] font-bold text-[#FE9C00] transition-all whitespace-nowrap border border-white/5 flex-shrink-0">
+                {isLoading ? <Loader2 size={10} className="animate-spin" /> : <Languages size={10} />}
+                <span className="hidden xs:inline ml-0.5">Dịch</span><span className="hidden sm:inline"> & Giải thích</span>
+            </button>
+         )}
+      </div>
+   );
+};
+
+// --- CUSTOM HOOK: UNDO/REDO ---
+const useUndoRedo = (initialState) => {
+  const [past, setPast] = useState([]);
+  const [present, setPresent] = useState(initialState);
+  const [future, setFuture] = useState([]);
+  
+  const set = (newPresent) => {
+    if (newPresent === present) return;
+    setPast((prev) => [...prev, present]);
+    setPresent(newPresent);
+    setFuture([]);
+  };
+
+  const undo = () => {
+    if (past.length === 0) return;
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+    setFuture((prev) => [present, ...prev]);
+    setPresent(previous);
+    setPast(newPast);
+  };
+
+  const redo = () => {
+    if (future.length === 0) return;
+    const next = future[0];
+    const newFuture = future.slice(1);
+    setPast((prev) => [...prev, present]);
+    setPresent(next);
+    setFuture(newFuture);
+  };
+
+  const reset = (val) => {
+    setPresent(val);
+    setPast([]);
+    setFuture([]);
+  }
+
+  return { state: present, set, undo, redo, canUndo: past.length > 0, canRedo: future.length > 0, reset };
+};
+
+// --- DATA CONFIGURATION ---
+const PROMPT_DATA = {
+  camera_setup: {
+    title: "Góc máy & Cảm xúc",
+    icon: Heart,
+    description: "Vị trí máy quay và bố cục khung hình",
+    options: [
+      { id: 'high_angle', label: 'High Angle', subLabel: 'máy quay cao hơn chủ thể', value: 'high angle shot, looking down at the subject, overhead perspective', img: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['full_body', 'medium_shot'], detail_vi: 'Góc máy từ trên cao giúp chủ thể trông nhỏ bé hơn, tạo cảm giác bị bao vây hoặc dễ bị tổn thương, phù hợp để kể chuyện tâm lý.' },
+      { id: 'low_angle', label: 'Low Angle', subLabel: 'máy quay thấp hơn chủ thể', value: 'low angle shot, looking up at the subject, heroic perspective, dominant presence', img: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['full_body', 'portrait'], detail_vi: 'Góc máy từ dưới lên khiến chủ thể trông cao lớn, uy quyền và mạnh mẽ hơn. Rất hiệu quả cho ảnh thời trang quyền lực.' },
+      { id: 'eye_level', label: 'Eye-level shot', subLabel: 'ngang tầm mắt, trung tính', value: 'eye-level shot, neutral perspective, natural gaze, straight on portrait', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot'], detail_vi: 'Góc nhìn ngang tầm mắt tạo cảm giác tự nhiên, gần gũi và trung tính như đang đối diện trực tiếp với người xem.' },
+      { id: 'front_view', label: 'Front view', subLabel: 'máy quay đối diện chủ thể', value: 'front view, facing the subject directly, symmetrical headshot', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot'], detail_vi: 'Góc nhìn trực diện giúp tối ưu hóa sự đối xứng và tạo kết nối mạnh mẽ qua ánh mắt giữa chủ thể và camera.' },
+      { id: 'centered', label: 'Centered composition', subLabel: 'chủ thể nằm giữa khung hình', value: 'centered composition, subject in middle of frame, balanced photography', img: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot', 'full_body'], detail_vi: 'Bố cục trung tâm đặt chủ thể ngay giữa ảnh, tạo sự tập trung tuyệt đối và cảm giác cân bằng, trang trọng.' },
+      { id: 'side_view', label: 'Side view / Profile', subLabel: 'nhìn ngang 90°', value: 'side view, profile shot, 90 degree angle, highlighting silhouette and facial contour', img: 'https://images.unsplash.com/photo-1503104834685-7205e8607eb9?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot'], detail_vi: 'Chụp góc nghiêng 90 độ làm nổi bật đường nét khuôn mặt, sống mũi và hình dáng cơ thể (silhouette).' },
+      { id: 'three_quarter', label: '3/4 angle view', subLabel: 'góc chéo 45° cho nhân vật', value: 'three-quarter view, 45 degree angle portrait, dynamic angle, character depth', img: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot'], detail_vi: 'Góc 3/4 là góc "vàng" trong chân dung, giúp khuôn mặt trông thon gọn và có chiều sâu hơn góc trực diện.' },
+      { id: 'ots', label: 'Over-the-shoulder', subLabel: 'qua vai nhân vật khác', value: 'over-the-shoulder shot, OTS shot, cinematic perspective from behind someone\'s shoulder', img: 'https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['portrait', 'medium_shot'], detail_vi: 'Góc máy qua vai tạo cảm giác như người xem đang tham gia vào cuộc đối thoại, mang đậm chất điện ảnh.' },
+      { id: 'top_down', label: 'Top-down / Bird’s-eye', subLabel: 'nhìn thẳng từ trên xuống', value: 'bird\'s-eye view, top-down shot, directly above the subject, flat lay perspective', img: 'https://images.unsplash.com/photo-1464802686167-b939a67a06a1?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['full_body'], detail_vi: 'Góc nhìn từ đỉnh đầu xuống (góc nhìn chim bay) tạo ra cái nhìn toàn cảnh, thường dùng cho ảnh Flatlay hoặc ảnh nghệ thuật.' },
+      { id: 'bottom_up', label: 'Bottom-up / Worm’s-eye', subLabel: 'nhìn từ dưới lên mạnh', value: 'worm\'s-eye view, bottom-up shot, extreme low angle, towering subject effect', img: 'https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['full_body', 'extreme_close'], detail_vi: 'Góc nhìn từ dưới đất lên (góc nhìn sâu bọ) làm cho mọi thứ trông khổng lồ và hùng vĩ một cách cực đoan.' },
+      { id: 'dutch_angle', label: 'Dutch Angle', subLabel: 'khung hình bị nghiêng', value: 'dutch angle shot, tilted camera, canted frame, dramatic tension', img: 'https://images.unsplash.com/photo-1492106087820-71f1a00d2b11?auto=format&fit=crop&q=80&w=200&h=120', recommended: ['full_body', 'medium_shot'], detail_vi: 'Cố tình làm nghiêng khung hình để tạo cảm giác bất an, căng thẳng hoặc sự xáo trộn trong tâm lý nhân vật.' },
+    ]
+  },
+  camera: {
+    title: "Ống kính & Tiêu cự",
+    icon: ScanEye,
+    description: "Phạm vi khung hình và độ xóa phông",
+    options: [
+      { id: 'full_body', label: 'Toàn thân', subLabel: 'Wide 24mm', value: 'full body shot, wide angle view, environment context', img: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Góc rộng 24mm giúp lấy trọn vóc dáng và bối cảnh xung quanh, kể câu chuyện về nhân vật trong không gian.' },
+      { id: 'street', label: 'Đời thường', subLabel: '35mm Lens', value: '35mm lens shot, street photography style, environmental portrait', img: 'https://images.unsplash.com/photo-1549402434-22df651f1532?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tiêu cự 35mm linh hoạt, lấy được cả người và cảnh, lý tưởng cho nhiếp ảnh đường phố và kể chuyện.' },
+      { id: 'medium_shot', label: 'Nửa người', subLabel: '50mm Lens', value: 'medium shot, waist up, 50mm lens, standard photography', img: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tiêu cự 50mm tương đương mắt người, mang lại cảm giác chân thực, gần gũi và không bị méo hình.' },
+      { id: 'portrait', label: 'Chân dung', subLabel: 'Tele 85mm', value: 'portrait shot, 85mm lens, creamy bokeh background', img: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&q=80&w=300&h=120', detail_vi: 'Tiêu cự 85mm là tiêu chuẩn vàng cho chân dung, giúp khuôn mặt không bị biến dạng và tạo hiệu ứng xóa phông (bokeh) tách nền tuyệt đẹp.' },
+      { id: 'extreme_close', label: 'Cực cận', subLabel: 'Macro', value: 'extreme close up, macro lens, hyper detail on eyes or textures', img: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ống kính Macro giúp soi rõ từng chi tiết nhỏ nhất như vân mắt hay kết cấu da, tạo ra hình ảnh ấn tượng mạnh về thị giác.' },
+      { id: 'long_shot', label: 'Viễn cảnh', subLabel: 'Tele 200mm', value: 'long shot, subject is small in frame, cinematic landscape', img: 'https://images.unsplash.com/photo-1464802686167-b939a67a06a1?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tiêu cự dài 200mm giúp nén không gian, làm nền phía sau trông gần hơn và làm nổi bật chủ thể nhỏ bé giữa thiên nhiên hùng vĩ.' },
+    ]
+  },
+  makeup: {
+    title: "Make-up & Khuôn mặt",
+    icon: Palette,
+    description: "Phong cách trang điểm và tone da",
+    options: [
+      { id: 'natural', label: 'Tự nhiên', subLabel: 'No-makeup look', value: 'natural makeup, soft skin texture, minimal foundation, fresh look', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Phong cách trang điểm tự nhiên, tập trung vào làn da khỏe mạnh.' },
+      { id: 'bold_lips', label: 'Môi đậm', subLabel: 'Classic/Sexy', value: 'bold red lips, sharp eyeliner, matte finish skin, classic glamour', img: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Nhấn mạnh đôi môi với màu sắc rực rỡ, tạo sự quyến rũ cổ điển.' },
+      { id: 'smokey_eyes', label: 'Mắt khói', subLabel: 'Dramatic', value: 'smokey eyes makeup, dark eyeshadow, intense gaze, moody aesthetic', img: 'https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tạo chiều sâu và sự bí ẩn cho đôi mắt bằng các tông màu tối.' },
+      { id: 'cyberpunk', label: 'Cyberpunk', subLabel: 'Neon/Future', value: 'cyberpunk makeup, neon eye accents, metallic skin sheen, futuristic glow', img: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Sử dụng gam màu neon rực rỡ, mang hơi thở tương lai.' },
+      { id: 'glass_skin', label: 'Glass Skin', subLabel: 'Korean Trend', value: 'glass skin makeup, dewy finish, highlighed cheekbones, k-beauty trend', img: 'https://images.unsplash.com/photo-1616683693504-3ea7e9ad6fec?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Làn da căng bóng như gương, đặc trưng của phong cách Hàn Quốc.' },
+      { id: 'freckles', label: 'Tàn nhang', subLabel: 'Sunkissed', value: 'natural faux freckles, sunkissed skin, blush on nose, youthful look', img: 'https://images.unsplash.com/photo-1515688594390-b649af70d282?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Thêm tàn nhang giả tạo vẻ đẹp ngây thơ, rám nắng khỏe khoắn.' },
+      { id: 'glitter', label: 'Kim tuyến', subLabel: 'Party/Festival', value: 'glitter makeup, sparkly eyeshadow, face gems, euphoria style', img: 'https://images.unsplash.com/photo-1596704017254-9b121068fb31?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Lấp lánh với kim tuyến và đá đính mặt, phù hợp tiệc tùng lễ hội.' },
+      { id: 'goth', label: 'Gothic', subLabel: 'Dark/Edgy', value: 'gothic makeup, black lipstick, pale skin, heavy eyeliner', img: 'https://images.unsplash.com/photo-1620217983196-039c016e5308?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Phong cách tối tăm, huyền bí với son đen và da trắng bệch.' },
+    ]
+  },
+  hair: {
+    title: "Kiểu Tóc",
+    icon: Scissors,
+    description: "Phong cách và màu sắc tóc",
+    options: [
+      { id: 'long_straight', label: 'Dài thẳng', subLabel: 'Elegant', value: 'long straight hair, silky texture, flowing in wind', img: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Mái tóc dài thẳng mượt mà tạo vẻ đẹp thanh lịch.' },
+      { id: 'short_bob', label: 'Tóc Bob', subLabel: 'Chic', value: 'short bob haircut, sharp edges, modern look', img: 'https://images.unsplash.com/photo-1492106087820-71f1a00d2b11?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Kiểu tóc bob ngắn cá tính, hiện đại.' },
+      { id: 'curly', label: 'Tóc Xoăn', subLabel: 'Voluminous', value: 'voluminous curly hair, tight ringlets, wild texture, bouncy curls', img: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Mái tóc xoăn bồng bềnh, tạo vẻ hoang dại và quyến rũ.' },
+      { id: 'wavy', label: 'Gợn sóng', subLabel: 'Beach Waves', value: 'wavy hair, beach waves, messy texture, relaxed style', img: 'https://images.unsplash.com/photo-1515934751635-c81c6bc9a2d8?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc uốn gợn sóng nhẹ nhàng như đi biển, tự nhiên.' },
+      { id: 'pixie', label: 'Pixie Cut', subLabel: 'Very Short', value: 'pixie cut, very short hair, boyish look, sharp features', img: 'https://images.unsplash.com/photo-1500917293891-ef795e70e1f6?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc cắt siêu ngắn, khoe trọn đường nét khuôn mặt cá tính.' },
+      { id: 'ponytail', label: 'Đuôi ngựa', subLabel: 'High Pony', value: 'high ponytail, sleek pulled back hair, exposing neck', img: 'https://images.unsplash.com/photo-1595476108010-b4d1f102b1b1?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc cột đuôi ngựa cao, gọn gàng và năng động.' },
+      { id: 'braids', label: 'Tóc tết', subLabel: 'Braided', value: 'double dutch braids, intricate braided hairstyle, boho look', img: 'https://images.unsplash.com/photo-1595867442385-055276e5d07c?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc tết bím đôi hoặc tết kiểu phức tạp, mang hơi hướng Bohemian.' },
+      { id: 'bun', label: 'Búi tóc', subLabel: 'Messy Bun', value: 'messy bun, casual updo, loose strands, relaxed vibe', img: 'https://images.unsplash.com/photo-1552699609-8002bb14d237?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc búi rối tự nhiên, tạo cảm giác thoải mái đời thường.' },
+      { id: 'bangs', label: 'Mái thưa', subLabel: 'Fringe', value: 'hair with bangs, wispy fringe, framing face', img: 'https://images.unsplash.com/photo-1502444330042-d1a1ddf9bb5b?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc mái thưa giúp khuôn mặt trông trẻ trung và mềm mại hơn.' },
+      { id: 'wet_look', label: 'Tóc ướt', subLabel: 'Edgy', value: 'wet hair look, slicked back, fresh out of water, editorial style', img: 'https://images.unsplash.com/photo-1534008740523-2856f671dfc8?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hiệu ứng tóc ướt vuốt ngược, thường thấy trên tạp chí thời trang.' },
+      { id: 'afro', label: 'Afro', subLabel: 'Natural', value: 'natural afro hair, big hair, natural texture, powerful silhouette', img: 'https://images.unsplash.com/photo-1589156229687-496a31ad1d1f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc xù tự nhiên, tạo hình khối mạnh mẽ và ấn tượng.' },
+      { id: 'colorful', label: 'Tóc màu', subLabel: 'Dyed', value: 'pastel pink hair, colorful dyed hair, anime style, vibrant', img: 'https://images.unsplash.com/photo-1527736947477-2790e28f3443?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tóc nhuộm màu rực rỡ hoặc pastel cá tính.' },
+    ]
+  },
+  pose_head: {
+    title: "Pose: Đầu & Mặt",
+    icon: Smile,
+    description: "Hướng nhìn và biểu cảm khuôn mặt",
+    options: [
+      { id: 'look_cam', label: 'Nhìn Cam', subLabel: 'Direct', value: 'looking directly at camera, engaging eye contact', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tạo sự kết nối trực tiếp với người xem qua ánh mắt.' },
+      { id: 'look_away', label: 'Nhìn xa', subLabel: 'Candid', value: 'looking away from camera, candid moment, thoughtful expression', img: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tạo cảm giác tự nhiên, suy tư như khoảnh khắc vô tình chụp được.' },
+      { id: 'closed_eyes', label: 'Nhắm mắt', subLabel: 'Serene', value: 'eyes closed, peaceful expression, enjoying the moment, serene', img: 'https://images.unsplash.com/photo-1517462964-21fdcec3f25e?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Biểu cảm bình yên, tận hưởng khoảnh khắc.' },
+      { id: 'chin_up', label: 'Hất cằm', subLabel: 'Confident', value: 'chin up, looking down at camera, arrogant, powerful expression', img: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hất cằm lên cao thể hiện sự tự tin, kiêu hãnh hoặc quyền lực.' },
+      { id: 'tilt_head', label: 'Nghiêng đầu', subLabel: 'Cute/Curious', value: 'tilted head, slight head tilt, curious expression, cute pose', img: 'https://images.unsplash.com/photo-1596280687368-80e9273c5280?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Đầu nghiêng nhẹ tạo cảm giác tò mò, đáng yêu hoặc lắng nghe.' },
+      { id: 'look_shoulder', label: 'Qua vai', subLabel: 'Mysterious', value: 'looking back over shoulder, turning head back, alluring gaze', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ngoái nhìn lại qua vai, tạo sự bí ẩn và quyến rũ.' },
+      { id: 'laughing', label: 'Cười lớn', subLabel: 'Joyful', value: 'laughing out loud, head thrown back, genuine happiness, big smile', img: 'https://images.unsplash.com/photo-1542596594-649edbc13630?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Cười sảng khoái, đầu ngả ra sau, thể hiện niềm vui chân thật.' },
+      { id: 'wink', label: 'Nháy mắt', subLabel: 'Playful', value: 'winking one eye, playful expression, cheeky mood', img: 'https://images.unsplash.com/photo-1515121240746-1fa8a4fa9449?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Nháy một mắt tinh nghịch, tạo không khí vui tươi.' },
+      { id: 'serious', label: 'Nghiêm nghị', subLabel: 'Intense', value: 'serious face, deadpan expression, intense stare, poker face', img: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Gương mặt lạnh lùng, nghiêm túc, tạo vẻ ngầu.' },
+      { id: 'biting_lip', label: 'Cắn môi', subLabel: 'Seductive', value: 'biting lower lip, nervous or seductive expression', img: 'https://images.unsplash.com/photo-1621784563330-caee0b138a00?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hành động cắn môi nhẹ, gợi cảm hoặc lo lắng.' },
+    ]
+  },
+  pose_hands: {
+    title: "Pose: Tay",
+    icon: Hand,
+    description: "Vị trí và cử chỉ của tay",
+    options: [
+      { id: 'pockets', label: 'Tay túi quần', subLabel: 'Casual', value: 'hands in pockets, relaxed posture', img: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tư thế thư giãn và thoải mái.' },
+      { id: 'crossed', label: 'Khoanh tay', subLabel: 'Assertive', value: 'arms crossed over chest, assertive stance', img: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Thể hiện sự tự tin và quyết đoán.' },
+      { id: 'touch_hair', label: 'Vuốt tóc', subLabel: 'Feminine', value: 'hand running through hair, playing with hair, fixing hair', img: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tay vuốt nhẹ hoặc nghịch tóc, rất nữ tính và tự nhiên.' },
+      { id: 'on_hips', label: 'Chống hông', subLabel: 'Power', value: 'hands on hips, power pose, superhero stance', img: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hai tay chống hông tạo dáng quyền lực, mạnh mẽ.' },
+      { id: 'touch_face', label: 'Chạm mặt', subLabel: 'Delicate', value: 'hand gently touching face, fingers on cheek, delicate pose', img: 'https://images.unsplash.com/photo-1534008740523-2856f671dfc8?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tay chạm nhẹ lên má hoặc môi, tạo cảm giác mong manh.' },
+      { id: 'chin_rest', label: 'Chống cằm', subLabel: 'Thinking', value: 'resting chin on hand, thinking pose, bored or deep in thought', img: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Cằm đặt lên tay, thể hiện sự suy tư hoặc chán chường nghệ thuật.' },
+      { id: 'reaching', label: 'Đưa tay ra', subLabel: 'POV', value: 'reaching hand towards camera, pov holding hands, beckoning', img: 'https://images.unsplash.com/photo-1516233758813-a38d024919c5?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Vươn tay về phía ống kính, mời gọi hoặc tạo hiệu ứng 3D.' },
+      { id: 'behind_head', label: 'Sau đầu', subLabel: 'Relaxed', value: 'hands clasped behind head, leaning back, relaxed', img: 'https://images.unsplash.com/photo-1531123414780-f74242c2b052?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hai tay đan sau gáy, tư thế thư giãn tuyệt đối.' },
+      { id: 'covering_face', label: 'Che mặt', subLabel: 'Shy/Peek', value: 'hands covering face, peeking through fingers, shy pose', img: 'https://images.unsplash.com/photo-1502452213786-a5bc0a67e963?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Dùng tay che mặt hoặc hé nhìn, tạo vẻ e thẹn.' },
+      { id: 'praying', label: 'Chắp tay', subLabel: 'Hopeful', value: 'hands clasped in prayer, namaste gesture, hopeful', img: 'https://images.unsplash.com/photo-1634547983636-f0331070559d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Hai tay chắp lại như đang cầu nguyện hoặc chào kiểu Namaste.' },
+    ]
+  },
+  pose_legs: {
+    title: "Pose: Chân & Dáng",
+    icon: Footprints,
+    description: "Tư thế đứng, ngồi hoặc di chuyển",
+    options: [
+      { id: 'standing', label: 'Đứng thẳng', subLabel: 'Basic', value: 'standing tall, straight posture', img: 'https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Dáng đứng thẳng cơ bản, khoe trọn vóc dáng.' },
+      { id: 'walking', label: 'Đang đi', subLabel: 'Motion', value: 'walking towards camera, in motion, dynamic stride', img: 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Dáng đi năng động, tạo sự sống động.' },
+      { id: 'sitting_cross', label: 'Ngồi bệt', subLabel: 'Cross-legged', value: 'sitting cross-legged on floor, lotus position, casual sitting', img: 'https://images.unsplash.com/photo-1520113426767-73d83935817d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ngồi khoanh chân thoải mái trên sàn.' },
+      { id: 'leaning', label: 'Dựa tường', subLabel: 'Cool', value: 'leaning against a wall, one leg up, relaxed cool pose', img: 'https://images.unsplash.com/photo-1503342394128-c104d54dba01?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Dựa lưng vào tường, một chân co lên, tạo vẻ bất cần.' },
+      { id: 'running', label: 'Chạy', subLabel: 'Action', value: 'running fast, sprinting, action shot, blur motion', img: 'https://images.unsplash.com/photo-1456425712194-e9a8d9d59245?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Đang chạy nhanh, tạo cảm giác hành động mạnh.' },
+      { id: 'sitting_chair', label: 'Ngồi ghế', subLabel: 'Formal/Chill', value: 'sitting on a chair, legs crossed, elegant sitting pose', img: 'https://images.unsplash.com/photo-1517677130602-2736b701267b?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ngồi trên ghế, vắt chéo chân thanh lịch.' },
+      { id: 'kneeling', label: 'Quỳ gối', subLabel: 'Low', value: 'kneeling on ground, one knee up, low profile pose', img: 'https://images.unsplash.com/photo-1524638431109-93d95c968f03?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Quỳ một chân hoặc hai chân, hạ thấp trọng tâm.' },
+      { id: 'jumping', label: 'Nhảy cao', subLabel: 'Energy', value: 'jumping in air, mid-air freeze, levitating, energetic', img: 'https://images.unsplash.com/photo-1509395293233-281df688f615?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Bắt khoảnh khắc đang nhảy lên không trung đầy năng lượng.' },
+      { id: 'lying_down', label: 'Nằm dài', subLabel: 'Relaxed', value: 'lying down on back, viewing from above, relaxing on ground', img: 'https://images.unsplash.com/photo-1518105570919-e342af1a2961?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Nằm dài trên cỏ hoặc giường, thư giãn hoàn toàn.' },
+      { id: 'squatting', label: 'Ngồi xổm', subLabel: 'Street/Asian', value: 'squatting pose, asian squat, street style, low angle', img: 'https://images.unsplash.com/photo-1552374196-c4e7ffc6e126?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ngồi xổm cá tính, thường thấy trong phong cách đường phố.' },
+    ]
+  },
+  accessories: {
+    title: "Vật phẩm & Phụ kiện",
+    icon: ShoppingBag,
+    description: "Đồ vật cầm tay hoặc phụ kiện đi kèm",
+    options: [
+      { id: 'bag', label: 'Túi xách', subLabel: 'Fashion', value: 'holding a luxury handbag, leather purse, fashion accessory', img: 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&q=80&w=200&h=120' },
+      { id: 'coffee', label: 'Cốc Coffee', subLabel: 'Lifestyle', value: 'holding a coffee cup, paper cup, steaming coffee, morning vibe', img: 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&q=80&w=200&h=120' },
+    ]
+  },
+  technical: {
+    title: "Filter ảnh",
+    icon: Film,
+    description: "Chất liệu ảnh và thiết bị mô phỏng",
+    options: [
+      { id: 'fuji', label: 'Fujifilm', subLabel: 'Vintage', value: 'shot on Fujifilm, vintage film grain, warm nostalgic tones, 35mm film aesthetic', img: 'https://images.unsplash.com/photo-1526285849717-482456cd7436?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Mô phỏng màu sắc cổ điển và độ hạt phim đặc trưng.' },
+      { id: 'leica', label: 'Leica Look', subLabel: 'Sắc nét', value: 'shot on Leica M11, sharp optics, high micro-contrast, legendary street photography look', img: 'https://images.unsplash.com/photo-1510127034890-ba27508e9f1c?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Độ tương phản cao và màu sắc thực tế từ ống kính huyền thoại.' },
+      { id: 'portra400', label: 'Kodak Portra', subLabel: 'Skin Tones', value: 'Kodak Portra 400 film, fine grain, natural skin tones, daylight balanced', img: 'https://images.unsplash.com/photo-1495574578149-1663f738f65d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Màu sắc ấm áp, tái tạo tông màu da tuyệt đẹp, độ hạt mịn.' },
+      { id: 'polaroid', label: 'Polaroid', subLabel: 'Instant', value: 'Polaroid style, instant film aesthetic, soft vintage colors, white border feel', img: 'https://images.unsplash.com/photo-1518337775569-7c157640280f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Chất ảnh lấy ngay, màu vintage nhạt và độ nét không quá cao.' },
+      { id: 'bw_noir', label: 'B&W Noir', subLabel: 'Monochrome', value: 'black and white photography, film noir style, high contrast, dramatic shadows', img: 'https://images.unsplash.com/photo-1485217988980-11786ced9454?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Đen trắng độ tương phản cao, phong cách điện ảnh Noir bí ẩn.' },
+      { id: 'cinematic', label: 'Teal & Orange', subLabel: 'Blockbuster', value: 'cinematic teal and orange color grading, movie look, dramatic atmosphere', img: 'https://images.unsplash.com/photo-1478720568477-152d9b164e63?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Màu phim bom tấn, tương phản giữa xanh teal và cam.' },
+      { id: 'disposable', label: 'Disposable', subLabel: 'Flash', value: 'disposable camera aesthetic, harsh direct flash, vignette, 90s party vibe', img: 'https://images.unsplash.com/photo-1514316454349-750a7fd3da3a?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Giả lập máy ảnh dùng 1 lần với đèn flash trực diện gắt và tối góc.' },
+      { id: 'hdr', label: 'HDR Realistic', subLabel: 'Hyper Detail', value: 'HDR photography, hyper realistic, balanced highlights and shadows, sharp details', img: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Độ động cao, chi tiết rõ ràng cả vùng sáng và tối.' },
+      { id: 'lomo', label: 'Lomography', subLabel: 'Vivid/Vignette', value: 'Lomography style, oversaturated colors, strong vignette, unexpected light leaks', img: 'https://images.unsplash.com/photo-1500462918059-b1a0cb512f1d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Màu sắc rực rỡ quá mức, tối 4 góc mạnh và có thể lọt sáng.' },
+      { id: 'infrared', label: 'Hồng ngoại', subLabel: 'Surreal', value: 'infrared photography, aerochrome, surreal colors, pink trees, dreamscape', img: 'https://images.unsplash.com/photo-1462212061099-0a6f87428f52?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Biến màu xanh lá thành hồng/trắng, tạo khung cảnh siêu thực.' },
+      { id: 'soft_focus', label: 'Soft Focus', subLabel: 'Dreamy', value: 'soft focus, dreamy haze, diffusion filter, romantic atmosphere', img: 'https://images.unsplash.com/photo-1515516089376-88db1e26e9c2?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Làm mờ nhẹ các chi tiết, tạo cảm giác mộng mơ lãng mạn.' },
+      { id: 'sepia', label: 'Sepia', subLabel: 'Old Photo', value: 'sepia tone, old photograph, wild west vibe, aged paper texture', img: 'https://images.unsplash.com/photo-1533038590840-1cde6e668a91?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tone màu nâu vàng của những bức ảnh cũ thời xưa.' },
+    ]
+  },
+  lighting: {
+    title: "Ánh sáng",
+    icon: Zap,
+    description: "Thiết lập mood ánh sáng rực rỡ",
+    options: [
+      { id: 'front_soft', label: 'Front + Soft', subLabel: 'Beauty lighting', value: 'front lighting, soft light, beauty photography, minimal shadows', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ánh sáng mịn màng từ phía trước, làm sáng khuôn mặt và che khuyết điểm da.' },
+      { id: 'side_soft', label: 'Side + Soft', subLabel: 'Dimensional portrait', value: 'side lighting, soft light, dimensional portrait, character depth', img: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tạo các mảng sáng tối nhẹ nhàng, làm khuôn mặt có chiều sâu hơn.' },
+      { id: 'side_hard', label: 'Side + Hard', subLabel: 'Dramatic contrast', value: 'side lighting, hard light, high contrast, fashion photography', img: 'https://images.unsplash.com/photo-1492106087820-71f1a00d2b11?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Độ tương phản cực mạnh, tạo vẻ cá tính và kịch tính.' },
+      { id: 'back_soft', label: 'Back + Soft', subLabel: 'Silhouette effect', value: 'backlighting, soft light, silhouette effect, mysterious atmosphere', img: 'https://images.unsplash.com/photo-1509248961158-e54f6934749c?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ánh sáng từ sau lưng, tạo viền sáng bí ẩn hoặc hình bóng silhouette.' },
+      { id: 'rim_soft', label: 'Rim + Soft', subLabel: 'Cinematic glow', value: 'rim lighting, soft light, cinematic glow, professional movie look', img: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Tạo một đường viền sáng mỏng xung quanh chủ thể để tách biệt khỏi nền u tối.' },
+      { id: 'top_soft', label: 'Top + Soft', subLabel: 'Realistic mood', value: 'top lighting, soft light, realistic atmosphere, introspective mood', img: 'https://images.unsplash.com/photo-1516762689617-e1cffcef479d?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ánh sáng từ trên đỉnh đầu xuống, tạo mood thực tế đời thường.' },
+      { id: 'under_hard', label: 'Under + Hard', subLabel: 'Horror aesthetic', value: 'under lighting, hard light, horror aesthetic', img: 'https://images.unsplash.com/photo-1509248961158-e54f6934749c?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ánh sáng hắt từ dưới lên, tạo hiệu ứng kinh dị hoặc ma mị.' },
+      { id: 'side_lowkey', label: 'Side + Lowkey', subLabel: 'Dark & Moody', value: 'side lighting, low-key photography, metaphorical shadows', img: 'https://images.unsplash.com/photo-1485230405346-71acb9518d9c?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Bóng tối chiếm chủ đạo, chỉ để lộ một phần chủ thể đầy ẩn dụ.' },
+      { id: 'back_lowkey', label: 'Back + Lowkey', subLabel: 'Mysterious & Bold', value: 'backlighting, low-key style, dramatic silhouette', img: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Nhấn mạnh sự bí ẩn của chủ thể thông qua bóng tối bao trùm.' },
+      { id: 'back_volumetric', label: 'Volumetric', subLabel: 'God rays', value: 'backlighting, volumetric lighting, god rays, atmospheric haze', img: 'https://images.unsplash.com/photo-1519834785169-98be25ec3f84?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Các tia sáng xuyên qua sương khói, tạo vẻ hoành tráng và thần thánh.' },
+      { id: 'side_neon', label: 'Side + Neon', subLabel: 'Cyberpunk vivid', value: 'side lighting, neon light, cyberpunk aesthetic, vivid colors', img: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Màu neon xanh/tím rực rỡ, mang đậm chất tương lai.' },
+      { id: 'golden_hour', label: 'Golden Hour', subLabel: 'Natural orange glow', value: 'warm golden hour sunlight, soft orange glow, magic hour', img: 'https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?auto=format&fit=crop&q=80&w=200&h=120', detail_vi: 'Ánh nắng ấm áp của buổi chiều tà, tạo vẻ lãng mạn và dịu mắt.' },
+    ]
+  }
+};
+
+// --- MAIN APP COMPONENT ---
+
+export default function App() {
+  const [selections, setSelections] = useState({});
+  const [activeCategory, setActiveCategory] = useState(""); 
+  const [isProductMode, setIsProductMode] = useState(false);
+  
+  const [expandedOptionIds, setExpandedOptionIds] = useState(new Set());
+  const [expandedDetailIds, setExpandedDetailIds] = useState(new Set());
+
+  // Input States with History
+  const subjectState = useUndoRedo(""); 
+  const makeupState = useUndoRedo("");
+  const outfitState = useUndoRedo(""); 
+  const hairState = useUndoRedo("");
+  const heldItemState = useUndoRedo(""); 
+  const poseState = useUndoRedo(""); 
+  const lightingState = useUndoRedo(""); 
+  
+  const derivedCameraTech = useRef(""); 
+  const techState = useUndoRedo("");
+  const bgState = useUndoRedo("");
+  
+  // Confirmed States
+  const [confirmedImagePrompt, setConfirmedImagePrompt] = useState("");
+  const [confirmedMakeup, setConfirmedMakeup] = useState("");
+  const [confirmedOutfit, setConfirmedOutfit] = useState("");
+  const [confirmedHairState, setConfirmedHairState] = useState("");
+  const [confirmedHeldItem, setConfirmedHeldItem] = useState(""); 
+  const [confirmedPose, setConfirmedPose] = useState(""); 
+  const [confirmedLighting, setConfirmedLighting] = useState(""); 
+  const [confirmedTechFromImage, setConfirmedTechFromImage] = useState("");
+  const [confirmedBackground, setConfirmedBackground] = useState("");
+  
+  // General States
+  const [finalPrompt, setFinalPrompt] = useState("");
+  const [finalExplanation, setFinalExplanation] = useState(""); 
+  const [conflictReport, setConflictReport] = useState(""); 
+  const [copied, setCopied] = useState(false);
+  
+  // Explanations State
+  const [explanations, setExplanations] = useState({});
+
+  // Image Upload States
+  const [uploadedImage, setUploadedImage] = useState(null);
+  const [uploadedImageBase64, setUploadedImageBase64] = useState(null);
+  const [uploadedBgImage, setUploadedBgImage] = useState(null);
+  const [uploadedBgImageBase64, setUploadedBgImageBase64] = useState(null);
+  const [uploadedOutfitImage, setUploadedOutfitImage] = useState(null);
+  const [uploadedOutfitImageBase64, setUploadedOutfitImageBase64] = useState(null);
+  const [uploadedHairImage, setUploadedHairImage] = useState(null);
+  const [uploadedHairImageBase64, setUploadedHairImageBase64] = useState(null);
+  const [uploadedTechImage, setUploadedTechImage] = useState(null);
+  const [uploadedTechImageBase64, setUploadedTechImageBase64] = useState(null);
+  const [uploadedHeldItemImage, setUploadedHeldItemImage] = useState(null);
+  const [uploadedHeldItemImageBase64, setUploadedHeldItemImageBase64] = useState(null);
+  const [uploadedMakeupImage, setUploadedMakeupImage] = useState(null);
+  const [uploadedMakeupImageBase64, setUploadedMakeupImageBase64] = useState(null);
+  const [uploadedLightingImage, setUploadedLightingImage] = useState(null); 
+  const [uploadedLightingImageBase64, setUploadedLightingImageBase64] = useState(null);
+  const [uploadedPoseImage, setUploadedPoseImage] = useState(null);
+  const [uploadedPoseImageBase64, setUploadedPoseImageBase64] = useState(null);
+
+  const [scannedData, setScannedData] = useState({});
+
+  // Visibility toggles
+  const [showBgUpload, setShowBgUpload] = useState(false);
+  const [showOutfitUpload, setShowOutfitUpload] = useState(false);
+  const [showHairUpload, setShowHairUpload] = useState(false);
+  const [showTechUpload, setShowTechUpload] = useState(false);
+  const [showHeldItemUpload, setShowHeldItemUpload] = useState(false);
+  const [showMakeupUpload, setShowMakeupUpload] = useState(false);
+  const [showLightingUpload, setShowLightingUpload] = useState(false); 
+  const [showPoseUpload, setShowPoseUpload] = useState(false); 
+
+  // Analyzing status
+  const [isEnriching, setIsEnriching] = useState(false);
+  const [isExplainingFinal, setIsExplainingFinal] = useState(false);
+  const [isDetectingConflicts, setIsDetectingConflicts] = useState(false);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
+  const [isAnalyzingBg, setIsAnalyzingBg] = useState(false);
+  const [isAnalyzingOutfit, setIsAnalyzingOutfit] = useState(false);
+  const [isAnalyzingHair, setIsAnalyzingHair] = useState(false);
+  const [isAnalyzingTech, setIsAnalyzingTech] = useState(false);
+  const [isAnalyzingHeldItem, setIsAnalyzingHeldItem] = useState(false);
+  const [isAnalyzingMakeup, setIsAnalyzingMakeup] = useState(false);
+  const [isAnalyzingLighting, setIsAnalyzingLighting] = useState(false); 
+  const [isAnalyzingPose, setIsAnalyzingPose] = useState(false); 
+  const [isGeneratingSurprise, setIsGeneratingSurprise] = useState(false);
+  
+  const [suggestionLoading, setSuggestionLoading] = useState(null);
+  const [fieldSuggestions, setFieldSuggestions] = useState({}); 
+  const [aiData, setAiData] = useState({});
+
+  // --- FIREBASE STATES ---
+  const [user, setUser] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const fileInputRef = useRef(null);
+  const bgFileInputRef = useRef(null);
+  const outfitFileInputRef = useRef(null);
+  const hairFileInputRef = useRef(null);
+  const techFileInputRef = useRef(null);
+  const heldItemFileInputRef = useRef(null);
+  const makeupFileInputRef = useRef(null);
+  const lightingFileInputRef = useRef(null); 
+  const poseFileInputRef = useRef(null); 
+
+  const titleGradientClass = "bg-gradient-to-r from-white via-[#D3A08F] to-white/60 bg-clip-text text-transparent";
+
+  // Cleanup URLs
+  useEffect(() => {
+    return () => {
+      [uploadedImage, uploadedBgImage, uploadedOutfitImage, uploadedHairImage, uploadedTechImage, uploadedHeldItemImage, uploadedMakeupImage, uploadedLightingImage, uploadedPoseImage].forEach(url => {
+        if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+      });
+    };
+  }, [uploadedImage, uploadedBgImage, uploadedOutfitImage, uploadedHairImage, uploadedTechImage, uploadedHeldItemImage, uploadedMakeupImage, uploadedLightingImage, uploadedPoseImage]);
+
+  // --- FIREBASE AUTH ---
+  useEffect(() => {
+    const initAuth = async () => {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+            await signInAnonymously(auth);
+        }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // --- FIRESTORE SYNC ---
+  useEffect(() => {
+    if (!user) return;
+    const historyRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
+    const unsubscribe = onSnapshot(historyRef, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sắp xếp theo thời gian giảm dần (mới nhất lên đầu) - client side sorting để tránh complex query error
+        data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+        setHistory(data);
+    }, (error) => {
+        console.error("Firestore sync error:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // --- SAVE ACTION ---
+  const handleSavePrompt = async () => {
+    if (!user || !finalPrompt) return;
+    setIsSaving(true);
+    try {
+        const historyRef = collection(db, 'artifacts', appId, 'users', user.uid, 'history');
+        await addDoc(historyRef, {
+            prompt: finalPrompt,
+            explanation: finalExplanation || "",
+            createdAt: new Date(),
+            // Lưu các thành phần để có thể restore lại sau này
+            subject: confirmedImagePrompt,
+            tech: confirmedTechFromImage,
+            lighting: confirmedLighting,
+            bg: confirmedBackground,
+            makeup: confirmedMakeup,
+            outfit: confirmedOutfit,
+            hair: confirmedHairState,
+            pose: confirmedPose,
+            held: confirmedHeldItem
+        });
+    } catch (e) {
+        console.error("Save failed", e);
+    }
+    setIsSaving(false);
+  };
+
+  // --- DELETE ACTION ---
+  const handleDeleteHistory = async (id) => {
+      if (!user) return;
+      try {
+          await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'history', id));
+      } catch (e) { console.error(e); }
+  }
+
+  // --- LOAD ACTION ---
+  const loadFromHistory = (item) => {
+      setFinalPrompt(item.prompt);
+      setFinalExplanation(item.explanation);
+      if (item.subject) { subjectState.reset(item.subject); setConfirmedImagePrompt(item.subject); }
+      if (item.tech) { techState.reset(item.tech); setConfirmedTechFromImage(item.tech); }
+      if (item.lighting) { lightingState.reset(item.lighting); setConfirmedLighting(item.lighting); }
+      if (item.bg) { bgState.reset(item.bg); setConfirmedBackground(item.bg); }
+      if (item.makeup) { makeupState.reset(item.makeup); setConfirmedMakeup(item.makeup); }
+      if (item.outfit) { outfitState.reset(item.outfit); setConfirmedOutfit(item.outfit); }
+      if (item.hair) { hairState.reset(item.hair); setConfirmedHairState(item.hair); }
+      if (item.pose) { poseState.reset(item.pose); setConfirmedPose(item.pose); }
+      if (item.held) { heldItemState.reset(item.held); setConfirmedHeldItem(item.held); }
+  }
+
+  // Sync Selections to State
+  useEffect(() => { makeupState.set(selections.makeup?.value || ""); }, [selections.makeup]);
+  useEffect(() => { hairState.set(selections.hair?.value || ""); }, [selections.hair]);
+  useEffect(() => { heldItemState.set(selections.accessories?.value || ""); }, [selections.accessories]);
+  useEffect(() => { lightingState.set(selections.lighting?.value || ""); }, [selections.lighting]); 
+  
+  useEffect(() => {
+      const parts = [
+          selections.pose_head?.value,
+          selections.pose_hands?.value,
+          selections.pose_legs?.value
+      ].filter(Boolean);
+      
+      poseState.set(parts.join(", ")); 
+  }, [selections.pose_head, selections.pose_hands, selections.pose_legs]);
+
+  const combineCameraPrompts = useCallback((angleOpt, lensOpt, techOpt, lightOpt) => {
+    let parts = [];
+    if (angleOpt) parts.push(angleOpt.value);
+    if (lensOpt) parts.push(lensOpt.value);
+    if (techOpt) parts.push(techOpt.value); 
+    return parts.length > 0 ? parts.join(", ") : "";
+  }, []);
+
+  useEffect(() => {
+    const combinedTech = combineCameraPrompts(selections.camera_setup, selections.camera, selections.technical, null);
+    derivedCameraTech.current = combinedTech;
+    techState.set(combinedTech || ""); 
+  }, [selections, combineCameraPrompts]);
+
+  useEffect(() => {
+    if (isEnriching) return;
+    const rawParts = [
+      confirmedImagePrompt, confirmedMakeup, confirmedOutfit, confirmedHairState, confirmedPose,
+      confirmedHeldItem, confirmedLighting, confirmedBackground, confirmedTechFromImage
+    ];
+    
+    const formattedParts = rawParts
+      .filter(p => typeof p === 'string' && p.trim().length > 0)
+      .map(p => {
+          const trimmed = p.trim();
+          return trimmed.endsWith('.') ? trimmed : trimmed + '.';
+      });
+
+    setFinalPrompt(formattedParts.join(" "));
+  }, [confirmedImagePrompt, confirmedMakeup, confirmedOutfit, confirmedHairState, confirmedHeldItem, confirmedPose, confirmedTechFromImage, confirmedBackground, confirmedLighting, isEnriching]);
+
+  useEffect(() => {
+    if (!finalPrompt || finalPrompt.length < 20) {
+        setConflictReport("");
+        return;
+    }
+    const timer = setTimeout(async () => {
+        setIsDetectingConflicts(true);
+        const checkPrompt = `You are a professional photography auditor. 
+        Analyze the following prompt for any logical contradictions (e.g., conflicting lens types, incompatible lighting, or impossible subjects).
+        Prompt: "${finalPrompt}"
+        If conflicts exist, list them briefly in Vietnamese (max 2 bullets). If NO conflicts, return nothing.`;
+        const result = await callGeminiApi({ contents: [{ parts: [{ text: checkPrompt }] }] });
+        if (result && result.trim().length > 5) {
+            setConflictReport(result.trim());
+        } else {
+            setConflictReport("");
+        }
+        setIsDetectingConflicts(false);
+    }, 2000); 
+    return () => clearTimeout(timer);
+  }, [finalPrompt]);
+
+  const handleSelect = useCallback((categoryKey, option) => {
+    setSelections(prev => ({ ...prev, [categoryKey]: prev[categoryKey]?.id === option.id ? null : option }));
+    if(option.detail_vi) {
+        setExplanations(prev => ({...prev, [categoryKey]: option.detail_vi}));
+    }
+  }, []);
+
+  const handleExplain = async (key, text) => {
+    if (!text) return;
+    setSuggestionLoading(key + '_explain');
+    const prompt = `Translate and briefly explain the following photography prompt into Vietnamese (max 20 words). Input: "${text}"`;
+    const result = await callGeminiApi({ contents: [{ parts: [{ text: prompt }] }] });
+    if (result) {
+        setExplanations(prev => ({...prev, [key]: result.trim()}));
+    }
+    setSuggestionLoading(null);
+  };
+
+  const handleAiSuggestions = useCallback(async (fieldKey, currentValue, label) => {
+    setSuggestionLoading(fieldKey);
+    const prompt = `
+      You are a creative photography prompt assistant.
+      Task: Generate 5-7 distinct, creative styles, details, or refinements for the '${label}' category.
+      Context: The current user input is "${currentValue}".
+      Instructions:
+      1. Analyze Input: If input is present, create specific visual elaborations. If empty, generate diverse creative ideas.
+      2. Format: Return STRICTLY a JSON array. "label_vi": Short Vietnamese label. "value_en": Detailed English prompt.
+      Example: [{"label_vi": "Váy đỏ", "value_en": "red dress"}]
+      Return ONLY the JSON array.
+    `;
+    const resultText = await callGeminiApi({ contents: [{ parts: [{ text: prompt }] }] });
+    if (resultText) {
+        try {
+            const jsonString = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+            const suggestions = JSON.parse(jsonString);
+            if (Array.isArray(suggestions)) setFieldSuggestions(prev => ({ ...prev, [fieldKey]: suggestions }));
+        } catch (e) { console.error("Failed to parse", e); }
+    }
+    setSuggestionLoading(null);
+  }, []);
+
+  const analyzeImageFull = useCallback(async (base64Image) => {
+    setIsAnalyzingImage(true);
+    setAiData({}); 
+    if (!base64Image) return;
+    const base64Data = base64Image.split(',')[1];
+    const promptText = `Analyze this image and split into: Subject, Makeup, Outfit, Hair, HeldItem, PoseHead, PoseHands, PoseLegs, Technical, Lighting, Background. Format: Subject: [Text] ||| Makeup: [Text] ||| Outfit: [Text] ||| Hair: [Text] ||| HeldItem: [Text] ||| PoseHead: [Text] ||| PoseHands: [Text] ||| PoseLegs: [Text] ||| Technical: [Text] ||| Lighting: [Text] ||| Background: [Text]`;
+    const resultText = await callGeminiApi({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: "image/jpeg", data: base64Data } }] }] });
+    if (resultText && resultText.includes("|||")) {
+      const parts = resultText.split("|||");
+      const clean = (text, prefix) => text ? text.replace(new RegExp(`${prefix}\\s*:?\\s*`, 'i'), "").trim() : "";
+      const newAiData = {
+          subject: clean(parts[0], "Subject"), makeup: clean(parts[1], "Makeup"), outfit: clean(parts[2], "Outfit"), hair: clean(parts[3], "Hair"),
+          heldItem: clean(parts[4], "HeldItem"), poseHead: clean(parts[5], "PoseHead"), poseHands: clean(parts[6], "PoseHands"),
+          poseLegs: clean(parts[7], "PoseLegs"), technical: clean(parts[8], "Technical"), 
+          lighting: clean(parts[9], "Lighting"), background: clean(parts[10], "Background"),
+      };
+      setAiData(newAiData);
+      subjectState.reset(newAiData.subject || ""); 
+      makeupState.reset(newAiData.makeup || ""); 
+      outfitState.reset(newAiData.outfit || ""); 
+      hairState.reset(newAiData.hair || "");
+      heldItemState.reset(newAiData.heldItem || ""); 
+      const combinedPose = [newAiData.poseHead, newAiData.poseHands, newAiData.poseLegs].filter(Boolean).join(", ");
+      poseState.reset(combinedPose || "");
+      techState.reset(newAiData.technical || ""); 
+      lightingState.reset(newAiData.lighting || "");
+      bgState.reset(newAiData.background || "");
+    }
+    setIsAnalyzingImage(false);
+  }, []);
+
+  const analyzeSpecific = useCallback(async (base64Image, promptSuffix, setFunction, setAnalyzing, categoryKey) => {
+    setAnalyzing(true);
+    if (!base64Image) return;
+    const base64Data = base64Image.split(',')[1];
+    const promptText = `Analyze ${promptSuffix}. Return a JSON object with: { "description": "English description (max 40 words)", "explanation": "Vietnamese explanation (max 20 words)" }. Valid JSON only.`;
+    const result = await callGeminiApi({ contents: [{ parts: [{ text: promptText }, { inlineData: { mimeType: "image/jpeg", data: base64Data } }] }] });
+    if (result) {
+        try {
+            const jsonString = result.replace(/```json/g, '').replace(/```/g, '').trim();
+            const data = JSON.parse(jsonString);
+            setFunction(data.description);
+            if (categoryKey) {
+                setScannedData(prev => ({...prev, [categoryKey]: data.description}));
+                setExplanations(prev => ({...prev, [categoryKey]: data.explanation}));
+            }
+        } catch (e) {
+             console.error(e);
+             setFunction(result.trim()); 
+        }
+    }
+    setAnalyzing(false);
+  }, []);
+
+  const handleImageUpload = useCallback(async (event, setImg, setBase64) => {
+    const file = event.target.files?.[0];
+    if (file) {
+        setImg(null); setBase64(null);
+        try {
+            const resizedBase64 = await resizeImage(file);
+            setBase64(resizedBase64); setImg(resizedBase64);
+        } catch (e) { console.error(e); }
+    }
+  }, []);
+
+  const handleSurpriseMe = async () => {
+    setIsGeneratingSurprise(true); setAiData({});
+    const promptText = `Generate a unique, creative, detailed concept for a photo. Return a JSON object with keys: subject, makeup, outfit, hair, heldItem, poseHead, poseHands, poseLegs, background, technical, lighting. Valid JSON only.`;
+    try {
+        const result = await callGeminiApi({ contents: [{ parts: [{ text: promptText }] }] });
+        if (result) {
+            let text = result.replace(/```json/g, '').replace(/```/g, '').trim();
+            const data = JSON.parse(text);
+            setAiData(data);
+            if (data.subject) { subjectState.reset(data.subject); setConfirmedImagePrompt(data.subject); }
+            if (data.makeup) { makeupState.reset(data.makeup); setConfirmedMakeup(data.makeup); }
+            if (data.outfit) { outfitState.reset(data.outfit); setConfirmedOutfit(data.outfit); }
+            if (data.hair) { hairState.reset(data.hair); setConfirmedHairState(data.hair); }
+            if (data.heldItem) { heldItemState.reset(data.heldItem); setConfirmedHeldItem(data.heldItem); }
+            const combinedPose = [data.poseHead, data.poseHands, data.poseLegs].filter(Boolean).join(", ");
+            if (combinedPose) { poseState.reset(combinedPose); setConfirmedPose(combinedPose); }
+            if (data.background) { bgState.reset(data.background); setConfirmedBackground(data.background); }
+            if (data.technical) { techState.reset(data.technical); setConfirmedTechFromImage(data.technical); }
+            if (data.lighting) { lightingState.reset(data.lighting); setConfirmedLighting(data.lighting); }
+        }
+    } catch (e) { console.error(e); }
+    setIsGeneratingSurprise(false);
+  };
+
+  const handleExplainFinal = async () => {
+      if (!finalPrompt) return;
+      setIsExplainingFinal(true);
+      const prompt = `Translate and briefly explain the following photography prompt into Vietnamese (max 2-3 sentences). Focus on the 'Vibe' and 'Technical focus'.
+      IMPORTANT: Return ONLY the explanation content. DO NOT include any labels, bold titles, or headers like "Bản dịch", "Góc chụp", "Diễn giải", "Giải thích", etc. Just start directly with the content.
+      Prompt: "${finalPrompt}"`;
+      const result = await callGeminiApi({ contents: [{ parts: [{ text: prompt }] }] });
+      if (result) {
+          setFinalExplanation(result.trim());
+      }
+      setIsExplainingFinal(false);
+  };
+
+  const copyToClipboard = (text) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed"; textArea.style.left = "-9999px";
+    document.body.appendChild(textArea); textArea.focus(); textArea.select();
+    try { if (document.execCommand('copy')) { setCopied(true); setTimeout(() => setCopied(false), 2000); } } catch (err) {}
+    document.body.removeChild(textArea);
+  };
+
+  const toggleExpandOption = useCallback((id, e) => {
+    e.stopPropagation(); 
+    setExpandedOptionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleExpandDetail = useCallback((id, e) => {
+    e.stopPropagation(); 
+    setExpandedDetailIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const CATEGORY_ORDER = ['camera_setup', 'camera', 'makeup', 'hair', 'pose_head', 'pose_hands', 'pose_legs', 'accessories', 'technical', 'lighting'];
+
+  return (
+    <div className="min-h-[100dvh] bg-[#0a0504] text-[#D3A08F] font-sans selection:bg-[#FE9C00]/30 selection:text-white pb-8">
+      <BackgroundLiquid />
+      <GlobalGradientDef />
+
+      <header className="border-b border-white/5 bg-transparent relative z-50 h-16 md:h-20 flex items-center">
+        <div className="max-w-[1400px] w-full mx-auto px-4 md:px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3 md:gap-4">
+            <div className="bg-[#FE9C00] p-2 md:p-2.5 rounded-[1rem] md:rounded-[1.2rem] shadow-lg shadow-[#FE9C00]/20">
+              <Sparkles size={22} className="text-white md:w-[26px] md:h-[26px]" />
+            </div>
+            <div>
+              <h1 className="text-xl md:text-2xl font-black tracking-tight bg-gradient-to-r from-white via-[#D3A08F] to-white/60 bg-clip-text text-transparent uppercase">Prompt Builder</h1>
+              <p className="text-[9px] md:text-[10px] font-bold text-[#8F8D8D]/50 uppercase tracking-widest mt-1">THE CRABIC AI</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleSurpriseMe} disabled={isGeneratingSurprise} className="hidden md:flex items-center gap-2 bg-[#FE9C00]/20 hover:bg-[#FE9C00]/30 border border-[#FE9C00]/30 px-3 md:px-4 py-1.5 md:py-2 rounded-[0.8rem] transition-all">
+                {isGeneratingSurprise ? <Loader2 size={16} className="animate-spin text-[#FE9C00]" /> : <Lightbulb size={16} className="text-[#FE9C00]" />}
+                <span className="text-xs md:text-sm font-bold text-[#FE9C00]">Inspire Me</span>
+            </button>
+            <button onClick={() => window.location.reload()} className="flex items-center gap-2 bg-white/5 border border-[#FE9C00]/20 px-3 md:px-4 py-1.5 md:py-2 rounded-[0.8rem] transition-all">
+              <RefreshCw size={16} className="text-[#FE9C00]" />
+              <span className="text-xs font-bold whitespace-nowrap">Làm mới</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1400px] mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
+        <div className="lg:col-span-7 space-y-4">
+          <ModeToggle isProduct={isProductMode} onToggle={setIsProductMode} />
+          {CATEGORY_ORDER.map((key) => {
+            const category = PROMPT_DATA[key];
+            if (!category) return null;
+            if (isProductMode && ['accessories', 'makeup', 'hair', 'pose_head', 'pose_hands', 'pose_legs'].includes(key)) return null;
+            const isOpen = activeCategory === key;
+            return (
+              <div key={key} className={`rounded-[2rem] overflow-hidden transition-all duration-700 gradient-border shadow-2xl ${isOpen ? 'bg-black/30 backdrop-blur-3xl ring-1 ring-[#FE9C00]/20' : 'bg-transparent hover:bg-white/5'}`}>
+                <button onClick={() => setActiveCategory(isOpen ? "" : key)} className="w-full p-5 md:p-6 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center transition-all ${isOpen ? 'bg-gradient-to-br from-[#FE9C00] to-[#D3A08F]' : 'bg-white/5'}`}>
+                      {isOpen ? <category.icon size={22} className="text-white" /> : <GradientIcon icon={category.icon} />}
+                    </div>
+                    <div className="text-left">
+                      <h3 className={`font-black text-lg md:text-xl tracking-tight ${titleGradientClass}`}>{category.title}</h3>
+                      <p className="text-xs font-medium text-white/80">{category.description}</p>
+                    </div>
+                  </div>
+                  <ChevronDown size={20} className={`transition-transform duration-500 ${isOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isOpen && (
+                  <div className="p-4 grid grid-cols-1 min-[700px]:grid-cols-2 gap-4">
+                    {category.options.map((option) => {
+                      const isSelected = selections[key]?.id === option.id;
+                      const isExpanded = expandedOptionIds.has(option.id);
+                      const isDetailExpanded = expandedDetailIds.has(option.id);
+                      const isRecommended = key === 'camera' && selections.camera_setup?.recommended?.includes(option.id);
+
+                      return (
+                        <div 
+                          key={option.id} 
+                          className={`group relative rounded-[1.8rem] border overflow-hidden transition-all duration-300 flex flex-col ${isSelected ? 'bg-[#FE9C00]/15 border-[#FE9C00]/60 ring-1 ring-[#FE9C00]/20' : isRecommended ? 'bg-[#FE9C00]/5 border-[#FE9C00]/40 animate-recommend-pulse shadow-[0_0_20px_rgba(254,156,0,0.15)]' : 'bg-white/[0.03] border-white/5 hover:border-white/20'}`}
+                        >
+                          <div className="absolute top-3 right-3 z-30 flex flex-col gap-2">
+                             <button 
+                                onClick={(e) => toggleExpandOption(option.id, e)}
+                                className={`w-7 h-7 flex items-center justify-center rounded-full transition-all border shadow-lg ${isExpanded ? 'bg-[#FE9C00] text-white border-[#FE9C00]' : 'bg-black/40 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                                title={isExpanded ? "Ẩn prompt" : "Hiện prompt"}
+                             >
+                                {isExpanded ? <EyeOff size={14} /> : <Eye size={14} />}
+                             </button>
+                             <button 
+                                onClick={(e) => toggleExpandDetail(option.id, e)}
+                                className={`w-7 h-7 flex items-center justify-center rounded-full transition-all border shadow-lg ${isDetailExpanded ? 'bg-[#4CC9F0] text-white border-[#4CC9F0]' : 'bg-black/40 text-white/60 border-white/10 hover:bg-white/10 hover:text-white'}`}
+                                title={isDetailExpanded ? "Ẩn giải thích" : "Xem giải thích"}
+                             >
+                                <HelpCircle size={14} />
+                             </button>
+                          </div>
+
+                          <div 
+                            className="flex items-center gap-4 p-4 cursor-pointer"
+                            onClick={() => handleSelect(key, option)}
+                          >
+                            <div className="relative flex-shrink-0">
+                                <img src={option.img} className={`w-16 h-16 rounded-2xl object-cover ring-2 transition-all ${isSelected ? 'ring-[#FE9C00]' : isRecommended ? 'ring-[#FE9C00]/60' : 'ring-white/10 group-hover:ring-white/30'}`} alt="" />
+                                {isSelected && <div className="absolute -top-2 -right-2 bg-[#FE9C00] text-white p-1 rounded-full shadow-lg"><Check size={10} strokeWidth={4} /></div>}
+                            </div>
+                            <div className="flex-1 min-w-0 pr-10">
+                                <h4 className={`text-sm md:text-base font-black truncate ${isSelected ? 'text-[#FE9C00]' : 'text-white'}`}>{option.label}</h4>
+                                <p className="text-[10px] md:text-xs font-bold text-white/40 truncate leading-tight uppercase tracking-wider">{option.subLabel}</p>
+                            </div>
+                          </div>
+
+                          {isExpanded && (
+                              <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                  <div className="p-3 rounded-xl bg-black/40 border border-white/10">
+                                      <div className="flex items-center gap-2 text-[#FE9C00] mb-1">
+                                          <Info size={10} />
+                                          <span className="text-[8px] font-black uppercase tracking-widest">Raw Prompt</span>
+                                      </div>
+                                      <p className="text-[11px] font-medium text-white/80 leading-relaxed italic select-all">
+                                          "{option.value}"
+                                      </p>
+                                  </div>
+                              </div>
+                          )}
+
+                          {isDetailExpanded && (
+                              <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                  <div className="p-3 rounded-xl bg-[#4CC9F0]/10 border border-[#4CC9F0]/30">
+                                      <div className="flex items-center gap-2 text-[#4CC9F0] mb-1">
+                                          <HelpCircle size={10} />
+                                          <span className="text-[8px] font-black uppercase tracking-widest">Giải thích chi tiết</span>
+                                      </div>
+                                      <p className="text-[11px] font-bold text-white/90 leading-relaxed">
+                                          {option.detail_vi || "Đang cập nhật nội dung giải thích chi tiết cho lựa chọn này."}
+                                      </p>
+                                  </div>
+                              </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="lg:col-span-5 flex flex-col gap-6 lg:sticky lg:top-24 h-fit">
+          <div className="bg-transparent backdrop-blur-[60px] border border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl p-2 gradient-border">
+            <div className="p-5 flex items-center gap-4 rounded-t-[2.2rem] border-b border-white/5">
+                <div className="p-2.5 bg-[#FE9C00] rounded-xl"><Terminal size={22} className="text-white" /></div>
+                <span className="text-lg font-black tracking-tight text-white uppercase">Workflow</span>
+            </div>
+            
+            <div className="p-2 md:p-6 space-y-6 lg:overflow-y-auto lg:max-h-[70vh] custom-scrollbar">
+              <div className="p-4 bg-black/30 rounded-[1.8rem] border border-white/5 flex flex-col gap-4 shadow-inner">
+                {uploadedImage ? (
+                  <div className="w-full relative rounded-[1.5rem] overflow-hidden h-48 ring-2 ring-white/10 shadow-xl">
+                    <img src={uploadedImage} alt="Preview" className="w-full h-full object-cover" />
+                    <button onClick={() => {setUploadedImage(null); setUploadedImageBase64(null);}} className="absolute top-4 right-4 bg-black/70 p-2 rounded-full"><X size={18} className="text-white" /></button>
+                  </div>
+                ) : (
+                  <div onClick={() => fileInputRef.current?.click()} className="w-full h-40 border-2 border-dashed border-white/10 rounded-[1.5rem] bg-black/30 flex flex-col items-center justify-center cursor-pointer hover:border-[#FE9C00]/50 transition-all group">
+                    <Upload size={32} className="text-slate-300 group-hover:text-[#FE9C00]" />
+                    <span className="mt-3 text-sm font-black text-slate-200 uppercase">Phân tích ảnh chính</span>
+                  </div>
+                )}
+                <input type="file" ref={fileInputRef} onChange={(e) => handleImageUpload(e, setUploadedImage, setUploadedImageBase64)} accept="image/*" className="hidden" />
+                <button onClick={() => uploadedImageBase64 && analyzeImageFull(uploadedImageBase64)} disabled={!uploadedImageBase64 || isAnalyzingImage} className={`w-full py-4 flex items-center justify-center gap-4 text-base font-black uppercase rounded-[1.2rem] transition-all shadow-xl active:scale-95 ${!uploadedImageBase64 ? 'bg-white/5 text-slate-700' : 'bg-[#FE9C00] text-white shadow-[#FE9C00]/40 ring-1 ring-white/20'}`}>
+                  {isAnalyzingImage ? <Loader2 size={22} className="animate-spin text-white" /> : <ScanEye size={22} className="text-white" />} 
+                  <span className="text-white">{isAnalyzingImage ? "Đang quét..." : "Phân tích AI"}</span>
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedImagePrompt ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                  <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={ImageIcon} size={20} /><span className={titleGradientClass}>1. {isProductMode ? "Sản phẩm" : "Chủ thể"}</span></label>
+                  <PromptSourceControl 
+                    activeSource={subjectState.state === aiData.subject ? 'ai' : 'manual'} 
+                    hasAiData={!!aiData.subject} hasSelection={true} 
+                    onSelectAI={() => subjectState.set(aiData.subject || "")} 
+                    onSelectManual={() => subjectState.set("")} 
+                    undo={subjectState.undo} redo={subjectState.redo} canUndo={subjectState.canUndo} canRedo={subjectState.canRedo}
+                  />
+                  <textarea value={subjectState.state} onChange={(e) => subjectState.set(e.target.value)} placeholder="Mô tả chủ thể..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2 placeholder:text-white/20" />
+                  <ExplanationBox 
+                    text={explanations['subject'] || (selections.camera?.detail_vi || selections.camera_setup?.detail_vi)} 
+                    isLoading={suggestionLoading === 'subject_explain'} 
+                    onTranslate={() => handleExplain('subject', subjectState.state)} 
+                  />
+                  <SuggestionPills suggestions={fieldSuggestions['subject']} onSelect={subjectState.set} currentValue={subjectState.state} onClear={() => subjectState.set("")} />
+                  <div className="flex gap-2 w-full">
+                    <AiSuggestButton loading={suggestionLoading === 'subject'} onClick={() => handleAiSuggestions('subject', subjectState.state, 'subject')} />
+                    <ConfirmButton isConfirmed={confirmedImagePrompt === subjectState.state && !!subjectState.state} isDisabled={!subjectState.state} onConfirm={() => setConfirmedImagePrompt(subjectState.state)} onCancel={() => setConfirmedImagePrompt("")} />
+                  </div>
+                </div>
+
+                <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedTechFromImage ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                  <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={Aperture} size={20} /><span className={titleGradientClass}>2. Camera & Lens</span></label>
+                  <PromptSourceControl 
+                    activeSource={showTechUpload ? 'image_scan' : (techState.state === aiData.technical ? 'ai' : 'manual')} 
+                    hasAiData={!!aiData.technical} hasSelection={!!derivedCameraTech.current} 
+                    onSelectAI={() => { setShowTechUpload(false); techState.set(aiData.technical || ""); }} 
+                    onSelectManual={() => { setShowTechUpload(false); techState.set(derivedCameraTech.current || ""); }} 
+                    onSelectImageUpload={() => { setShowTechUpload(true); if(scannedData.technical) techState.set(scannedData.technical); }} 
+                    undo={techState.undo} redo={techState.redo} canUndo={techState.canUndo} canRedo={techState.canRedo}
+                  />
+                  {showTechUpload ? (
+                    <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                      {uploadedTechImage ? (
+                        <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedTechImage} className="w-full h-full object-cover" alt="" /><button onClick={() => { setUploadedTechImage(null); setUploadedTechImageBase64(null); setScannedData(prev => ({...prev, technical: null})); techState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                      ) : ( <div onClick={() => techFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu thông số</span></div> )}
+                      <input type="file" ref={techFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedTechImage, setUploadedTechImageBase64)} accept="image/*" className="hidden" />
+                      <textarea value={techState.state} onChange={(e) => techState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-24 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                      
+                      <ExplanationBox 
+                        text={explanations['technical']} 
+                        isLoading={suggestionLoading === 'technical_explain'} 
+                        onTranslate={() => handleExplain('technical', techState.state)} 
+                      />
+
+                      <button onClick={() => uploadedTechImageBase64 && analyzeSpecific(uploadedTechImageBase64, "camera settings and aesthetic", (val) => { techState.set(val); setAiData(prev => ({...prev, technical: val})); }, setIsAnalyzingTech, 'technical')} disabled={!uploadedTechImageBase64 || isAnalyzingTech} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                        {isAnalyzingTech ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                        <span>Phân tích Thông số</span>
+                      </button>
+                    </div>
+                  ) : ( 
+                    <>
+                    <textarea value={techState.state} onChange={(e) => techState.set(e.target.value)} placeholder="Góc máy, tiêu cự..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2 placeholder:italic" /> 
+                    <ExplanationBox 
+                        text={explanations['technical'] || selections.camera?.detail_vi || selections.camera_setup?.detail_vi} 
+                        isLoading={suggestionLoading === 'technical_explain'} 
+                        onTranslate={() => handleExplain('technical', techState.state)} 
+                      />
+                    </>
+                  )}
+                  <SuggestionPills suggestions={fieldSuggestions['technical']} onSelect={techState.set} currentValue={techState.state} onClear={() => techState.set("")} />
+                  <ConfirmButton isConfirmed={confirmedTechFromImage === techState.state && !!techState.state} isDisabled={!techState.state} onConfirm={() => setConfirmedTechFromImage(techState.state)} onCancel={() => setConfirmedTechFromImage("")} />
+                </div>
+
+                <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedLighting ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                  <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={Zap} size={20} /><span className={titleGradientClass}>3. Ánh sáng</span></label>
+                  <PromptSourceControl 
+                    activeSource={showLightingUpload ? 'image_scan' : (lightingState.state === aiData.lighting ? 'ai' : 'manual')} 
+                    hasAiData={!!aiData.lighting} hasSelection={!!selections.lighting} 
+                    onSelectAI={() => { setShowLightingUpload(false); lightingState.set(aiData.lighting || ""); }} 
+                    onSelectManual={() => { setShowLightingUpload(false); lightingState.set(selections.lighting?.value || ""); }} 
+                    onSelectImageUpload={() => { setShowLightingUpload(true); if(scannedData.lighting) lightingState.set(scannedData.lighting); }} 
+                    undo={lightingState.undo} redo={lightingState.redo} canUndo={lightingState.canUndo} canRedo={lightingState.canRedo}
+                  />
+                  {showLightingUpload ? (
+                    <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                      {uploadedLightingImage ? (
+                        <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedLightingImage} className="w-full h-full object-cover" alt="" /><button onClick={() => { setUploadedLightingImage(null); setUploadedLightingImageBase64(null); setScannedData(prev => ({...prev, lighting: null})); lightingState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                      ) : ( <div onClick={() => lightingFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu ánh sáng</span></div> )}
+                      <input type="file" ref={lightingFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedLightingImage, setUploadedLightingImageBase64)} accept="image/*" className="hidden" />
+                      <textarea value={lightingState.state} onChange={(e) => lightingState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-24 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                      
+                      <ExplanationBox 
+                        text={explanations['lighting']} 
+                        isLoading={suggestionLoading === 'lighting_explain'} 
+                        onTranslate={() => handleExplain('lighting', lightingState.state)} 
+                      />
+
+                      <button onClick={() => uploadedLightingImageBase64 && analyzeSpecific(uploadedLightingImageBase64, "lighting style and atmosphere", (val) => { lightingState.set(val); setAiData(prev => ({...prev, lighting: val})); }, setIsAnalyzingLighting, 'lighting')} disabled={!uploadedLightingImageBase64 || isAnalyzingLighting} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                        {isAnalyzingLighting ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                        <span>Phân tích Ánh sáng</span>
+                      </button>
+                    </div>
+                  ) : ( 
+                    <>
+                    <textarea value={lightingState.state} onChange={(e) => lightingState.set(e.target.value)} placeholder="Mô tả ánh sáng..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2" /> 
+                    <ExplanationBox 
+                        text={explanations['lighting'] || selections.lighting?.detail_vi} 
+                        isLoading={suggestionLoading === 'lighting_explain'} 
+                        onTranslate={() => handleExplain('lighting', lightingState.state)} 
+                      />
+                    </>
+                  )}
+                  <SuggestionPills suggestions={fieldSuggestions['lighting']} onSelect={lightingState.set} currentValue={lightingState.state} onClear={() => lightingState.set("")} />
+                  <div className="flex gap-2 w-full">{!showLightingUpload && <AiSuggestButton loading={suggestionLoading === 'lighting'} onClick={() => handleAiSuggestions('lighting', lightingState.state, 'lighting setup')} />}<ConfirmButton isConfirmed={confirmedLighting === lightingState.state && !!lightingState.state} isDisabled={!lightingState.state} onConfirm={() => setConfirmedLighting(lightingState.state)} onCancel={() => setConfirmedLighting("")} /></div>
+                </div>
+
+                {!isProductMode && (
+                  <>
+                  <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedMakeup ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50 shadow-2xl shadow-[#FE9C00]/10' : 'bg-white/[0.02] border-white/10'}`}>
+                    <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={Palette} size={20} /><span className={titleGradientClass}>4. Trang điểm</span></label>
+                    <PromptSourceControl 
+                      activeSource={showMakeupUpload ? 'image_scan' : (makeupState.state === aiData.makeup ? 'ai' : 'manual')} 
+                      hasAiData={!!aiData.makeup} hasSelection={!!selections.makeup} 
+                      onSelectAI={() => { setShowMakeupUpload(false); makeupState.set(aiData.makeup || ""); }} 
+                      onSelectManual={() => { setShowMakeupUpload(false); makeupState.set(selections.makeup?.value || ""); }} 
+                      onSelectImageUpload={() => { setShowMakeupUpload(true); if(scannedData.makeup) makeupState.set(scannedData.makeup); }} 
+                      undo={makeupState.undo} redo={makeupState.redo} canUndo={makeupState.canUndo} canRedo={makeupState.canRedo}
+                    />
+                    {showMakeupUpload ? (
+                      <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                        {uploadedMakeupImage ? (
+                          <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedMakeupImage} alt="" className="w-full h-full object-cover" /><button onClick={() => { setUploadedMakeupImage(null); setUploadedMakeupImageBase64(null); setScannedData(prev => ({...prev, makeup: null})); makeupState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                        ) : (
+                          <div onClick={() => makeupFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu trang điểm</span></div>
+                        )}
+                        <input type="file" ref={makeupFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedMakeupImage, setUploadedMakeupImageBase64)} accept="image/*" className="hidden" />
+                        <textarea value={makeupState.state} onChange={(e) => makeupState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-20 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                        
+                        <ExplanationBox 
+                            text={explanations['makeup']} 
+                            isLoading={suggestionLoading === 'makeup_explain'} 
+                            onTranslate={() => handleExplain('makeup', makeupState.state)} 
+                        />
+
+                        <button onClick={() => uploadedMakeupImageBase64 && analyzeSpecific(uploadedMakeupImageBase64, "makeup style, skin tone and facial features", (val) => { makeupState.set(val); setAiData(prev => ({...prev, makeup: val})); }, setIsAnalyzingMakeup, 'makeup')} disabled={!uploadedMakeupImageBase64 || isAnalyzingMakeup} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                            {isAnalyzingMakeup ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                            <span>Phân tích Trang điểm</span>
+                        </button>
+                      </div>
+                    ) : ( 
+                      <>
+                      <textarea value={makeupState.state} onChange={(e) => makeupState.set(e.target.value)} placeholder="Mô tả trang điểm..." className="w-full h-20 bg-transparent text-white font-bold outline-none resize-none mb-2" /> 
+                      <ExplanationBox 
+                            text={explanations['makeup'] || selections.makeup?.detail_vi} 
+                            isLoading={suggestionLoading === 'makeup_explain'} 
+                            onTranslate={() => handleExplain('makeup', makeupState.state)} 
+                        />
+                      </>
+                    )}
+                    <SuggestionPills suggestions={fieldSuggestions['makeup']} onSelect={makeupState.set} currentValue={makeupState.state} onClear={() => makeupState.set("")} />
+                    <div className="flex gap-2 w-full">{!showMakeupUpload && <AiSuggestButton loading={suggestionLoading === 'makeup'} onClick={() => handleAiSuggestions('makeup', makeupState.state, 'makeup style')} />}<ConfirmButton isConfirmed={confirmedMakeup === makeupState.state && !!makeupState.state} isDisabled={!makeupState.state} onConfirm={() => setConfirmedMakeup(makeupState.state)} onCancel={() => setConfirmedMakeup("")} /></div>
+                  </div>
+
+                  <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedHairState ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                    <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={Scissors} size={20} /><span className={titleGradientClass}>5. Kiểu Tóc</span></label>
+                    <PromptSourceControl 
+                      activeSource={showHairUpload ? 'image_scan' : (hairState.state === aiData.hair ? 'ai' : 'manual')} 
+                      hasAiData={!!aiData.hair} hasSelection={!!selections.hair} 
+                      onSelectAI={() => { setShowHairUpload(false); hairState.set(aiData.hair || ""); }} 
+                      onSelectManual={() => { setShowHairUpload(false); hairState.set(selections.hair?.value || ""); }} 
+                      onSelectImageUpload={() => { setShowHairUpload(true); if(scannedData.hair) hairState.set(scannedData.hair); }} 
+                      undo={hairState.undo} redo={hairState.redo} canUndo={hairState.canUndo} canRedo={hairState.canRedo}
+                    />
+                    {showHairUpload ? (
+                      <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                        {uploadedHairImage ? (
+                          <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedHairImage} alt="" className="w-full h-full object-cover" /><button onClick={() => { setUploadedHairImage(null); setUploadedHairImageBase64(null); setScannedData(prev => ({...prev, hair: null})); hairState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                        ) : (
+                          <div onClick={() => hairFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu tóc</span></div>
+                        )}
+                        <input type="file" ref={hairFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedHairImage, setUploadedHairImageBase64)} accept="image/*" className="hidden" />
+                        <textarea value={hairState.state} onChange={(e) => hairState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-20 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                        
+                        <ExplanationBox 
+                            text={explanations['hair']} 
+                            isLoading={suggestionLoading === 'hair_explain'} 
+                            onTranslate={() => handleExplain('hair', hairState.state)} 
+                        />
+
+                        <button onClick={() => uploadedHairImageBase64 && analyzeSpecific(uploadedHairImageBase64, "hair style, color and texture", (val) => { hairState.set(val); setAiData(prev => ({...prev, hair: val})); }, setIsAnalyzingHair, 'hair')} disabled={!uploadedHairImageBase64 || isAnalyzingHair} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                            {isAnalyzingHair ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                            <span>Phân tích Kiểu Tóc</span>
+                        </button>
+                      </div>
+                    ) : ( 
+                      <>
+                      <textarea value={hairState.state} onChange={(e) => hairState.set(e.target.value)} placeholder="Mô tả kiểu tóc..." className="w-full h-20 bg-transparent text-white font-bold outline-none resize-none mb-2" /> 
+                      <ExplanationBox 
+                            text={explanations['hair'] || selections.hair?.detail_vi} 
+                            isLoading={suggestionLoading === 'hair_explain'} 
+                            onTranslate={() => handleExplain('hair', hairState.state)} 
+                        />
+                      </>
+                    )}
+                    <SuggestionPills suggestions={fieldSuggestions['hair']} onSelect={hairState.set} currentValue={hairState.state} onClear={() => hairState.set("")} />
+                    <div className="flex gap-2 w-full">{!showHairUpload && <AiSuggestButton loading={suggestionLoading === 'hair'} onClick={() => handleAiSuggestions('hair', hairState.state, 'hair style')} />}<ConfirmButton isConfirmed={confirmedHairState === hairState.state && !!hairState.state} isDisabled={!hairState.state} onConfirm={() => setConfirmedHairState(hairState.state)} onCancel={() => setConfirmedHairState("")} /></div>
+                  </div>
+
+                  <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedOutfit ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                    <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={Shirt} size={20} /><span className={titleGradientClass}>6. Phục trang</span></label>
+                    <PromptSourceControl 
+                      activeSource={showOutfitUpload ? 'image_scan' : (outfitState.state === aiData.outfit ? 'ai' : 'manual')} 
+                      hasAiData={!!aiData.outfit} hasSelection={true} 
+                      onSelectAI={() => { setShowOutfitUpload(false); outfitState.set(aiData.outfit || ""); }} 
+                      onSelectManual={() => { setShowOutfitUpload(false); outfitState.set(""); }} 
+                      onSelectImageUpload={() => { setShowOutfitUpload(true); if(scannedData.outfit) outfitState.set(scannedData.outfit); }} 
+                      undo={outfitState.undo} redo={outfitState.redo} canUndo={outfitState.canUndo} canRedo={outfitState.canRedo}
+                    />
+                    {showOutfitUpload ? (
+                      <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                        {uploadedOutfitImage ? (
+                          <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedOutfitImage} alt="" className="w-full h-full object-cover" /><button onClick={() => { setUploadedOutfitImage(null); setUploadedOutfitImageBase64(null); setScannedData(prev => ({...prev, outfit: null})); outfitState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                        ) : (
+                          <div onClick={() => outfitFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu trang phục</span></div>
+                        )}
+                        <input type="file" ref={outfitFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedOutfitImage, setUploadedOutfitImageBase64)} accept="image/*" className="hidden" />
+                        <textarea value={outfitState.state} onChange={(e) => outfitState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-24 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                        
+                        <ExplanationBox 
+                            text={explanations['outfit']} 
+                            isLoading={suggestionLoading === 'outfit_explain'} 
+                            onTranslate={() => handleExplain('outfit', outfitState.state)} 
+                        />
+
+                        <button onClick={() => uploadedOutfitImageBase64 && analyzeSpecific(uploadedOutfitImageBase64, "outfit style", (val) => { outfitState.set(val); setAiData(prev => ({...prev, outfit: val})); }, setIsAnalyzingOutfit, 'outfit')} disabled={!uploadedOutfitImageBase64 || isAnalyzingOutfit} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                            {isAnalyzingOutfit ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                            <span>Phân tích Phục trang</span>
+                        </button>
+                      </div>
+                    ) : ( 
+                      <>
+                      <textarea value={outfitState.state} onChange={(e) => outfitState.set(e.target.value)} placeholder="Mô tả trang phục..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2" /> 
+                      <ExplanationBox 
+                            text={explanations['outfit']} 
+                            isLoading={suggestionLoading === 'outfit_explain'} 
+                            onTranslate={() => handleExplain('outfit', outfitState.state)} 
+                        />
+                      </>
+                    )}
+                    <SuggestionPills suggestions={fieldSuggestions['outfit']} onSelect={outfitState.set} currentValue={outfitState.state} onClear={() => outfitState.set("")} />
+                    <div className="flex gap-2 w-full">{!showOutfitUpload && <AiSuggestButton loading={suggestionLoading === 'outfit'} onClick={() => handleAiSuggestions('outfit', outfitState.state, 'fashion outfit')} />}<ConfirmButton isConfirmed={confirmedOutfit === outfitState.state && !!outfitState.state} isDisabled={!outfitState.state} onConfirm={() => setConfirmedOutfit(outfitState.state)} onCancel={() => setConfirmedOutfit("")} /></div>
+                  </div>
+
+                  <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedPose ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                    <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={User} size={20} /><span className={titleGradientClass}>7. Dáng & Cử chỉ</span></label>
+                    <PromptSourceControl 
+                      activeSource={showPoseUpload ? 'image_scan' : (
+                          poseState.state === [aiData.poseHead, aiData.poseHands, aiData.poseLegs].filter(Boolean).join(", ") && poseState.state !== "" 
+                          ? 'ai' : 'manual'
+                      )}
+                      hasAiData={!!(aiData.poseHead || aiData.poseHands || aiData.poseLegs)} hasSelection={true} 
+                      onSelectAI={() => { 
+                          setShowPoseUpload(false);
+                          const combined = [aiData.poseHead, aiData.poseHands, aiData.poseLegs].filter(Boolean).join(", ");
+                          poseState.set(combined || ""); 
+                      }} 
+                      onSelectManual={() => { 
+                          setShowPoseUpload(false);
+                          const parts = [selections.pose_head?.value, selections.pose_hands?.value, selections.pose_legs?.value].filter(Boolean);
+                          poseState.set(parts.join(", ")); 
+                      }} 
+                      onSelectImageUpload={() => { setShowPoseUpload(true); if(scannedData.pose) poseState.set(scannedData.pose); }}
+                      undo={poseState.undo} redo={poseState.redo} canUndo={poseState.canUndo} canRedo={poseState.canRedo}
+                    />
+                    {showPoseUpload ? (
+                        <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                            {uploadedPoseImage ? (
+                                <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedPoseImage} className="w-full h-full object-cover" alt="" /><button onClick={() => { setUploadedPoseImage(null); setUploadedPoseImageBase64(null); setScannedData(prev => ({...prev, pose: null})); poseState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                            ) : ( <div onClick={() => poseFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu dáng</span></div> )}
+                            <input type="file" ref={poseFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedPoseImage, setUploadedPoseImageBase64)} accept="image/*" className="hidden" />
+                            <textarea value={poseState.state} onChange={(e) => poseState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-24 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                            
+                            <ExplanationBox 
+                                text={explanations['pose']} 
+                                isLoading={suggestionLoading === 'pose_explain'} 
+                                onTranslate={() => handleExplain('pose', poseState.state)} 
+                            />
+
+                            <button onClick={() => uploadedPoseImageBase64 && analyzeSpecific(uploadedPoseImageBase64, "full body pose, gestures and body language", (val) => { poseState.set(val); setAiData(prev => ({...prev, poseHead: val, poseHands: "", poseLegs: ""})); }, setIsAnalyzingPose, 'pose')} disabled={!uploadedPoseImageBase64 || isAnalyzingPose} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                                {isAnalyzingPose ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                                <span>Phân tích Dáng</span>
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                        <textarea value={poseState.state} onChange={(e) => poseState.set(e.target.value)} placeholder="Tư thế, dáng đứng, tay..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2" />
+                        <ExplanationBox 
+                            text={explanations['pose']} 
+                            isLoading={suggestionLoading === 'pose_explain'} 
+                            onTranslate={() => handleExplain('pose', poseState.state)} 
+                        />
+                        </>
+                    )}
+                    <SuggestionPills suggestions={fieldSuggestions['pose']} onSelect={poseState.set} currentValue={poseState.state} onClear={() => poseState.set("")} />
+                    <div className="flex gap-2 w-full">{!showPoseUpload && <AiSuggestButton loading={suggestionLoading === 'pose'} onClick={() => handleAiSuggestions('pose', poseState.state, 'pose description')} />}<ConfirmButton isConfirmed={confirmedPose === poseState.state && !!poseState.state} isDisabled={!poseState.state} onConfirm={() => setConfirmedPose(poseState.state)} onCancel={() => setConfirmedPose("")} /></div>
+                  </div>
+                  </>
+                )}
+
+                <div className={`p-5 rounded-[1.8rem] border transition-all ${confirmedBackground ? 'bg-[#FE9C00]/10 border-[#FE9C00]/50' : 'bg-white/[0.02] border-white/10'}`}>
+                  <label className="text-xs font-black flex items-center gap-3 uppercase tracking-[0.2em] mb-2"><GradientIcon icon={MapPin} size={20} /><span className={titleGradientClass}>{!isProductMode ? "8." : "4."} Bối cảnh</span></label>
+                  <PromptSourceControl 
+                    activeSource={showBgUpload ? 'image_scan' : (bgState.state === aiData.background ? 'ai' : 'manual')} 
+                    hasAiData={!!aiData.background} hasSelection={true} 
+                    onSelectAI={() => { setShowBgUpload(false); bgState.set(aiData.background || ""); }} 
+                    onSelectManual={() => { setShowBgUpload(false); bgState.set(""); }} 
+                    onSelectImageUpload={() => { setShowBgUpload(true); if(scannedData.background) bgState.set(scannedData.background); }} 
+                    undo={bgState.undo} redo={bgState.redo} canUndo={bgState.canUndo} canRedo={bgState.canRedo}
+                  />
+                  {showBgUpload ? (
+                    <div className="flex flex-col gap-3 mb-2 animate-in fade-in zoom-in-95 duration-300">
+                       {uploadedBgImage ? (
+                        <div className="relative w-full h-32 rounded-xl overflow-hidden ring-1 ring-white/10"><img src={uploadedBgImage} className="w-full h-full object-cover" alt="" /><button onClick={() => { setUploadedBgImage(null); setUploadedBgImageBase64(null); setScannedData(prev => ({...prev, background: null})); bgState.set(""); }} className="absolute top-2 right-2 bg-black/60 p-1 rounded-full"><X size={14} /></button></div>
+                       ) : ( <div onClick={() => bgFileInputRef.current?.click()} className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-black/20 flex flex-col items-center justify-center cursor-pointer"><ImagePlus size={24} className="text-slate-400 mb-1" /><span className="text-[10px] text-slate-400 font-bold uppercase">Mẫu bối cảnh</span></div> )}
+                       <input type="file" ref={bgFileInputRef} onChange={(e) => handleImageUpload(e, setUploadedBgImage, setUploadedBgImageBase64)} accept="image/*" className="hidden" />
+                       <textarea value={bgState.state} onChange={(e) => bgState.set(e.target.value)} placeholder="Kết quả phân tích..." className="w-full h-24 bg-black/30 border border-white/10 rounded-xl p-3 text-sm text-white font-bold outline-none resize-none mb-1" />
+                       
+                       <ExplanationBox 
+                            text={explanations['background']} 
+                            isLoading={suggestionLoading === 'background_explain'} 
+                            onTranslate={() => handleExplain('background', bgState.state)} 
+                        />
+
+                       <button onClick={() => uploadedBgImageBase64 && analyzeSpecific(uploadedBgImageBase64, "background environment", (val) => { bgState.set(val); setAiData(prev => ({...prev, background: val})); }, setIsAnalyzingBg, 'background')} disabled={!uploadedBgImageBase64 || isAnalyzingBg} className={`w-full py-3 bg-[#FE9C00] text-white shadow-xl shadow-[#FE9C00]/20 rounded-[1.2rem] font-black text-sm uppercase flex items-center justify-center gap-2 active:scale-95 transition-all disabled:opacity-50 ring-1 ring-white/20`}>
+                         {isAnalyzingBg ? <Loader2 size={16} className="animate-spin text-white" /> : <ScanEye size={16} className="text-white" />}
+                         <span>Phân tích Bối cảnh</span>
+                       </button>
+                    </div>
+                  ) : ( 
+                    <>
+                    <textarea value={bgState.state} onChange={(e) => bgState.set(e.target.value)} placeholder="Mô tả bối cảnh..." className="w-full h-24 bg-transparent text-white font-bold outline-none resize-none mb-2" /> 
+                    <ExplanationBox 
+                            text={explanations['background']} 
+                            isLoading={suggestionLoading === 'background_explain'} 
+                            onTranslate={() => handleExplain('background', bgState.state)} 
+                        />
+                    </>
+                  )}
+                  <SuggestionPills suggestions={fieldSuggestions['background']} onSelect={bgState.set} currentValue={bgState.state} onClear={() => bgState.set("")} />
+                  <div className="flex gap-2 w-full">{!showBgUpload && <AiSuggestButton loading={suggestionLoading === 'background'} onClick={() => handleAiSuggestions('background', bgState.state, 'background')} />}<ConfirmButton isConfirmed={confirmedBackground === bgState.state && !!bgState.state} isDisabled={!bgState.state} onConfirm={() => setConfirmedBackground(bgState.state)} onCancel={() => setConfirmedBackground("")} /></div>
+                </div>
+              </div>
+
+              <div className="relative pt-8 border-t border-white/5 pb-10">
+                <div className="flex items-center gap-4 mb-6">
+                   <div className="bg-[#FE9C00] p-3 rounded-2xl shadow-xl shadow-[#FE9C00]/30"><Check size={26} strokeWidth={4} className="text-white" /></div>
+                   <span className="text-xl font-black tracking-tight text-white uppercase">Kết quả Prompt</span>
+                </div>
+                
+                {conflictReport && (
+                    <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-2xl animate-in slide-in-from-top-2 duration-500">
+                        <div className="flex items-center gap-2 text-red-400 font-black text-xs uppercase mb-1">
+                            <ShieldAlert size={14} /> ⚡ Phát hiện xung đột (Conflict Detected)
+                        </div>
+                        <p className="text-xs text-red-200/80 italic">{conflictReport}</p>
+                    </div>
+                )}
+                {isDetectingConflicts && (
+                    <div className="mb-4 flex items-center gap-2 px-2 text-[10px] font-bold text-white/40 uppercase animate-pulse">
+                        <Loader2 size={10} className="animate-spin" /> Kiểm tra xung đột logic...
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div className="flex flex-col gap-2">
+                     <span className="text-xs font-bold text-white/60 uppercase tracking-widest pl-1">English Prompt</span>
+                     <textarea value={finalPrompt} readOnly placeholder="Chờ tổng hợp..." className="w-full h-48 md:h-64 bg-transparent border border-[#FE9C00]/20 rounded-[2rem] p-6 text-base text-[#D3A08F] font-black leading-relaxed resize-none shadow-2xl backdrop-blur-3xl outline-none" />
+                  </div>
+                  
+                  <div className="flex flex-col gap-2">
+                     <span className="text-xs font-bold text-[#FE9C00] uppercase tracking-widest pl-1 flex items-center gap-2"><Languages size={12} /> Diễn giải Tiếng Việt</span>
+                     <div className="w-full h-48 md:h-64 bg-white/5 border border-white/10 rounded-[2rem] p-6 text-sm text-white/80 leading-relaxed overflow-y-auto italic custom-scrollbar">
+                        {finalExplanation ? finalExplanation : "Nội dung dịch và giải thích sẽ xuất hiện tại đây sau khi bạn bấm nút Diễn giải..."}
+                     </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                    <div className="flex flex-row gap-2">
+                        <button 
+                            onClick={handleExplainFinal} 
+                            disabled={isExplainingFinal || !finalPrompt} 
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-4 rounded-[1.2rem] text-sm font-black bg-white/10 border border-[#FE9C00]/30 hover:bg-[#FE9C00]/20 transition-all text-[#FE9C00]"
+                        >
+                            {isExplainingFinal ? <Loader2 size={16} className="animate-spin" /> : <Languages size={16} />} 
+                            <span className="whitespace-nowrap">Diễn giải</span>
+                        </button>
+                        <button 
+                            onClick={handleSavePrompt} 
+                            disabled={isSaving || !finalPrompt} 
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-4 rounded-[1.2rem] text-sm font-black bg-white/10 border border-[#FE9C00]/30 hover:bg-[#FE9C00]/20 transition-all text-[#FE9C00]"
+                        >
+                            {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />} 
+                            <span className="whitespace-nowrap">Lưu Prompt</span>
+                        </button>
+                    </div>
+                    <button 
+                        onClick={() => copyToClipboard(finalPrompt)} 
+                        className={`w-full flex items-center justify-center gap-2 px-3 py-4 rounded-[1.2rem] text-sm font-black transition-all ${copied ? 'bg-white text-[#FE9C00]' : 'bg-[#FE9C00] text-white'}`}
+                    >
+                        {copied ? <Check size={18} strokeWidth={4} /> : <Copy size={18} />} 
+                        <span>{copied ? "Đã chép" : "Copy Prompt"}</span>
+                    </button>
+                </div>
+
+                {/* --- HISTORY SECTION --- */}
+                {history.length > 0 && (
+                    <div className="mt-10 space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                        <div className="flex items-center gap-2 text-white/60 font-black text-xs uppercase tracking-widest px-2 mb-2 border-b border-white/5 pb-2">
+                            <History size={14} /> Lịch sử đã lưu ({history.length})
+                        </div>
+                        <div className="grid gap-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                            {history.map((item) => (
+                                <div key={item.id} className="group relative p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-[#FE9C00]/30 hover:bg-white/[0.04] transition-all cursor-pointer" onClick={() => loadFromHistory(item)}>
+                                    <p className="text-xs text-white/90 line-clamp-2 mb-2 leading-relaxed font-bold">{item.prompt}</p>
+                                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-white/5">
+                                        <span className="text-[9px] text-white/30 uppercase font-bold tracking-wider">{item.createdAt?.seconds ? new Date(item.createdAt.seconds * 1000).toLocaleDateString('vi-VN') : 'Just now'}</span>
+                                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); loadFromHistory(item); }} 
+                                                className="p-1.5 bg-[#FE9C00]/10 hover:bg-[#FE9C00]/20 rounded-lg text-[#FE9C00] transition-all" 
+                                                title="Nạp lại"
+                                            >
+                                                <RefreshCw size={12} />
+                                            </button>
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteHistory(item.id); }} 
+                                                className="p-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400 transition-all" 
+                                                title="Xóa"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {item.subject && <div className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[#FE9C00]/50" />}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer className="w-full py-8 flex justify-center mt-8 relative z-10 overflow-hidden">
+        <div className="flex items-center gap-5 opacity-70 bg-black/40 backdrop-blur-xl px-6 py-2.5 rounded-full border border-white/5 shadow-2xl overflow-x-auto max-w-[90vw] custom-scrollbar">
+          {[ ['#0a0504', '0A0504'], ['#2B2B2B', '2B2B2B'], ['#8F8D8D', '8F8D8D'], ['#D3A08F', 'D3A08F'], ['#FE9C00', 'FE9C00'] ].map(([color, label]) => (
+            <div key={label} className="flex items-center gap-2 px-1 min-w-fit">
+              <div className="w-2.5 h-2.5 rounded-full ring-1 ring-white/10" style={{ backgroundColor: color }} />
+              <span className="text-[7pt] font-mono uppercase text-white/40">{label}</span>
+            </div>
+          ))}
+        </div>
+      </footer>
+
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes recommendPulse {
+          0% { border-color: rgba(254, 156, 0, 0.3); box-shadow: 0 0 5px rgba(254, 156, 0, 0.1); }
+          50% { border-color: rgba(254, 156, 0, 0.8); box-shadow: 0 0 20px rgba(254, 156, 0, 0.3); }
+          100% { border-color: rgba(254, 156, 0, 0.3); box-shadow: 0 0 5px rgba(254, 156, 0, 0.1); }
+        }
+        .animate-recommend-pulse {
+          animation: recommendPulse 2.5s infinite ease-in-out;
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(143, 141, 141, 0.2); border-radius: 20px; }
+        .gradient-border { position: relative; }
+        .gradient-border::after { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; background: linear-gradient(to right, white, #D3A08F, rgba(255,255,255,0.4)); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; pointer-events: none; opacity: 0.2; }
+        .border-gradient { position: relative; z-index: 1; }
+        .border-gradient::after { content: ""; position: absolute; inset: 0; border-radius: 1.2rem; padding: 2px; background: linear-gradient(to right, white, #D3A08F, rgba(255,255,255,0.6)); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; pointer-events: none; opacity: 0.2; }
+        @media (max-width: 400px) {
+          .xs\\:inline { display: inline !important; }
+        }
+      `}} />
+    </div>
+  );
+}
